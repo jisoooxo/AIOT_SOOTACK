@@ -1,0 +1,174 @@
+motor_interface_node:
+  ros__parameters:
+    port_name: "/dev/ttyUSB0"
+    baudrate: 1000000
+    protocol_version: 2.0
+
+    dxl_ids:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+
+    motor_models:
+      - "XH540_24V_RS485"
+      - "XH540_24V_RS485"
+      - "XH540_24V_RS485"
+      - "XH540_24V_RS485"
+      - "XH430_24V_RS485"
+
+    # Wizard에서 이미 Current Control Mode로 맞춘다는 전제
+    configure_operating_mode: false
+    operating_mode_current: 0
+
+    torque_on_start: true
+    torque_off_on_shutdown: true
+
+    control_dt: 0.02
+    current_cmd_timeout_sec: 0.3
+
+    # motor_interface 쪽 최후 안전 제한
+    max_current_raw:
+      - 30
+      - 30
+      - 30
+      - 30
+      - 15
+
+
+aiot_current_control_node:
+  ros__parameters:
+    robot_name: "aiot_5dof_arm_pneumatic_gripper"
+    dof: 5
+
+    joint_names:
+      - "joint1"
+      - "joint2"
+      - "joint3"
+      - "joint4"
+      - "joint5"
+
+    motor_ids:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+
+    motor_models:
+      - "XH540_24V_RS485"
+      - "XH540_24V_RS485"
+      - "XH540_24V_RS485"
+      - "XH540_24V_RS485"
+      - "XH430_24V_RS485"
+
+    motor_voltage:
+      - 24.0
+      - 24.0
+      - 24.0
+      - 24.0
+      - 24.0
+
+    dh_d:
+      - 0.12365
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.130
+
+    dh_a:
+      - 0.0
+      - 0.130
+      - 0.130
+      - 0.0
+      - 0.0
+
+    dh_alpha_deg:
+      - -90.0
+      - 0.0
+      - 0.0
+      - 90.0
+      - 0.0
+
+    dh_theta_offset_deg:
+      - 0.0
+      - -90.0
+      - 0.0
+      - 90.0
+      - 0.0
+
+    # 쭉 펼친 자세에서 모든 모터가 180도
+    home_deg:
+      - 180.0
+      - 180.0
+      - 180.0
+      - 180.0
+      - 180.0
+
+    # position 읽었을 때 관절 방향이 반대면 조립 후 수정
+    joint_direction:
+      - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+
+    # 전류를 줬을 때 움직임 방향이 반대면 조립 후 수정
+    current_direction:
+      - 1
+      - 1
+      - 1
+      - 1
+      - 1
+
+    min_deg:
+      - -170.0
+      - -120.0
+      - -120.0
+      - -120.0
+      - -170.0
+
+    max_deg:
+      - 170.0
+      - 120.0
+      - 120.0
+      - 120.0
+      - 170.0
+
+    control_dt: 0.02
+    position_ticks_per_rev: 4096.0
+
+    # read_only, zero_current, manual_current 중 하나
+    control_mode: "read_only"
+
+    manual_current_raw:
+      - 0
+      - 0
+      - 0
+      - 0
+      - 0
+
+    max_current_raw:
+      - 30
+      - 30
+      - 30
+      - 30
+      - 15
+
+    current_ramp_step:
+      - 2
+      - 2
+      - 2
+      - 2
+      - 1
+
+    require_position_feedback: true
+    enable_joint_limit_safety: true
+    log_period_sec: 1.0
+
+
+current_logger_node:
+  ros__parameters:
+    log_dir: "aiot_current_logs"
+    log_dt: 0.02

@@ -1,0 +1,14 @@
+1. 비전이 보내주는 raw_target(뒤집기 필요할 때)
+ros2 topic pub --once /vision/pick_target std_msgs/msg/String "{data: '{\"index\":1,\"height\":0.075,\"need_flip\":true,\"xyz\":[0.315,0.0,0.10],\"yaw\":180.0}'}"
+
+2. transform_node가 보내주는 베이스 기준 좌표값
+ros2 topic pub --once /pick_pose std_msgs/msg/String "{data: '{\"xyz\":[0.315,0.0,0.037],\"yaw\":180.0}'}"
+
+3. 비전이 보내주는 raw_target(뒤집기 필요없을 때)
+ros2 topic pub --once /vision/pick_target std_msgs/msg/String "{data: '{\"index\":1,\"height\":0.075,\"need_flip\":false,\"xyz\":[0.315,0.0,0.10],\"yaw\":180.0}'}"
+
+4. pack_param이 보내주는 베이스 기준 place 위치
+ros2 topic pub --once /control/plan_place std_msgs/msg/String "{data: '{\"xyz\":[0.315,0.0,0.10],\"yaw\":180.0}'}"
+
+5. keep 이어서 비전이 keep 해야하는 박스 좌표를 보내줄 때
+ros2 topic pub --once /vision/keep_pick_pose std_msgs/msg/String "{data: '{\"xyz\":[0.315,0.0,0.10],\"yaw\":180.0}'}"
