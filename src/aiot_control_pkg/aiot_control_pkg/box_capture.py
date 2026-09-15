@@ -20,7 +20,7 @@ from sam2.sam2_image_predictor import SAM2ImagePredictor
 # ----------------------------------------------------------------------
 W, H, FPS = 1280, 720, 30
 ROI_X_MIN, ROI_X_MAX = 200, 1200
-ROI_Y_MIN, ROI_Y_MAX = 150, 550
+ROI_Y_MIN, ROI_Y_MAX = 250, 650
 
 # 리얼센스 설정 리셋
 HW_RESET_ON_START = False    # False로 하면 리셋 안하고 이전 설정 그대로. 리셋하면 노출/화이트밸런스 초기화됨. 
@@ -73,8 +73,11 @@ DEBUG_ROUGH = True  # 대충 위치 잡기 시각화
 # ----------------------------------------------------------------------
 # SAM2 설정
 # ----------------------------------------------------------------------
-SAM2_CONFIG = "configs/sam2.1/sam2.1_hiera_t.yaml"          # 가장 작은 모델로..
-SAM2_CHECKPOINT   = "/home/leejunmi/sam2/checkpoints/sam2.1_hiera_tiny.pt"
+# SAM2_CONFIG = "configs/sam2.1/sam2.1_hiera_t.yaml"          # 가장 작은 모델로..
+# SAM2_CHECKPOINT   = "/home/leejunmi/sam2/checkpoints/sam2.1_hiera_tiny.pt"
+
+SAM2_CKPT   = '/home/pc/sam2/checkpoints/sam2.1_hiera_tiny.pt'
+SAM2_CONFIG = "configs/sam2.1/sam2.1_hiera_t.yaml"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -87,7 +90,7 @@ class BoxCapture:
         self.mode = mode
 
         # ---- SAM2 ----
-        sam2_model = build_sam2(SAM2_CONFIG, SAM2_CHECKPOINT, device=DEVICE)
+        sam2_model = build_sam2(SAM2_CONFIG, SAM2_CKPT, device=DEVICE)
         self.predictor = SAM2ImagePredictor(sam2_model)
 
         # ---- RealSense 파이프라인 ----

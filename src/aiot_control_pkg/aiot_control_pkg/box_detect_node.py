@@ -191,7 +191,7 @@ class BoxDetectNode(Node):
         _, _, _, avg_angle, avg_cx, avg_cy, avg_cz, _ = self.accum_result[idx]
 
         out = String()
-        out.data = f"{idx},{avg_cx:.2f},{avg_cy:.2f},{avg_cz:.2f},{avg_angle:.2f}"
+        out.data = f"{avg_cx:.2f},{avg_cy:.2f},{avg_cz:.2f},{avg_angle:.2f}"
         self.keep_pose_pub.publish(out)
         self.get_logger().info(f"/vision/keep_pick_pose 발행: {out.data}")
 

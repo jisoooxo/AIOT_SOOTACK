@@ -42,6 +42,7 @@ KEEP_PLACE_POSITIONS = [
 
 STATE_IDLE = 'IDLE'
 STATE_WAIT_PICK_POSE = 'WAIT_PICK_POSE'
+STATE_WAIT_KEEP_POSE = 'WAIT_KEEP_POSE'
 STATE_WAIT_JOINT_STATE = 'WAIT_JOINT_STATE'
 
 STATE_WAIT_APPROACH = 'WAIT_APPROACH'
@@ -72,11 +73,13 @@ class AIOTControlNode(Node):
         self.place_done_pub = self.create_publisher(Bool, '/control/place_done', 10)
         self.keep_done_pub = self.create_publisher(Bool, '/control/keep_done', 10)
         self.raw_pick_pose_pub = self.create_publisher(String, '/raw_pick_pose', 10)
+        self.raw_keep_pick_pose_pub = self.create_publisher(String, '/raw_keep_pick_pose', 10)
 
         self.create_subscription(String, '/vision/pick_target', self.pick_target_callback, 10)
         self.create_subscription(String, '/pick_pose', self.pick_pose_callback, 10)
         self.create_subscription(String, '/control/plan_place', self.plan_place_callback, 10)
-        self.create_subscription(String, '/vision/keep_pick_pose', self.keep_pick_pose_callback, 10)
+        self.create_subscription(String, '/vision/keep_pick_pose', self.keep_pick_target_callback, 10)
+        self.create_subscription(String, '/keep_pick_pose', self.keep_pick_pose_callback, 10)
         self.create_subscription(Empty, '/arm/motion_done', self.motion_done_callback, 10)
         self.create_subscription(JointState, '/joint_states', self.joint_state_callback, 10)
 
@@ -88,7 +91,7 @@ class AIOTControlNode(Node):
 
         self.index = None
         self.height = None
-        self.need_flip = False
+        self.need_flip = 0
 
         self.pick_position = None
         self.pick_yaw = None
@@ -115,16 +118,19 @@ class AIOTControlNode(Node):
         if self.state != STATE_IDLE:
             return
 
-        data = json.loads(msg.data)
-        self.index = int(data['index'])
-        self.height = max(float(data['height']), 0.02)
-        self.need_flip = self.read_bool(data['need_flip'])
+        result = self.vision_pick_target(msg)
+        if result is None:
+            return
 
-        position = self.read_position(data)
-        yaw = float(data['yaw'])
-        
+        position, yaw, self.index, self.height, self.need_flip = result
+
+        self.height = max(self.height, 0.02)
+
         raw_msg = String()
-        raw_msg.data = json.dumps({'xyz': position.tolist(), 'yaw': yaw})
+        raw_msg.data = json.dumps({
+            'xyz': position.tolist(),
+            'yaw': yaw
+        })
 
         self.state = STATE_WAIT_PICK_POSE
         self.raw_pick_pose_pub.publish(raw_msg)
@@ -154,8 +160,27 @@ class AIOTControlNode(Node):
         self.state = STATE_WAIT_JOINT_STATE
         self.joint_state_request_pub.publish(Empty())
 
-    def keep_pick_pose_callback(self, msg):
+    def keep_pick_target_callback(self, msg):
         if self.state != STATE_IDLE:
+            return
+
+        result = self.vision_keep_pick_target(msg)
+        if result is None:
+            return
+
+        position, yaw = result
+
+        raw_msg = String()
+        raw_msg.data = json.dumps({
+            'xyz': position.tolist(),
+            'yaw': yaw
+        })
+
+        self.state = STATE_WAIT_KEEP_POSE
+        self.raw_keep_pick_pose_pub.publish(raw_msg)
+
+    def keep_pick_pose_callback(self, msg):
+        if self.state != STATE_WAIT_KEEP_POSE:
             return
 
         data = json.loads(msg.data)
@@ -182,10 +207,42 @@ class AIOTControlNode(Node):
         elif self.task == 'keep_pick':
             self.start_keep_pick()
 
+    def vision_pick_target(self, msg):
+        parts = msg.data.strip().split(',')
+
+        if len(parts) != 7:
+            self.get_logger().error(
+                f"/vision/pick_target 파싱 실패: {msg.data!r}"
+            )
+            return None
+
+        idx = int(parts[0])
+        cx, cy, cz, height, angle1 = (float(p) for p in parts[1:6])
+        need_flip = bool(int(parts[6]))
+
+        position = np.array([cx, cy, cz], dtype=float)
+
+        return position, angle1, idx, height, need_flip
+
+    def vision_keep_pick_target(self, msg):
+        parts = msg.data.strip().split(',')
+
+        if len(parts) != 4:
+            self.get_logger().error(
+                f"/vision/keep_pick_target 파싱 실패: {msg.data!r}"
+            )
+            return None
+
+        x, y, z, yaw = (float(p) for p in parts)
+
+        position = np.array([x, y, z], dtype=float)
+
+        return position, yaw
+
     def start_pick(self):
         pick_yaw = self.pick_yaw
 
-        if self.need_flip:
+        if self.need_flip == 1:
             if self.index == 1:
                 pick_yaw += math.radians(90.0)
             elif self.index == 3:
@@ -195,7 +252,7 @@ class AIOTControlNode(Node):
         self.start_topdown(self.pick_position, pick_yaw, 'PICK')
 
     def finish_pick(self):
-        if self.need_flip:
+        if self.need_flip == 1:
             self.start_flip_place()
             return
 
@@ -626,17 +683,6 @@ class AIOTControlNode(Node):
         publisher.publish(msg)
 
     @staticmethod
-    def read_position(data):
-        if 'xyz' in data:
-            position = np.asarray(data['xyz'], dtype=float)
-        elif 'position' in data:
-            position = np.asarray(data['position'], dtype=float)
-        else:
-            position = np.array([float(data['x']), float(data['y']), float(data['z'])], dtype=float)
-
-        return position
-
-    @staticmethod
     def read_bool(value):
         if isinstance(value, bool):
             return value
@@ -659,7 +705,7 @@ class AIOTControlNode(Node):
 
         self.index = None
         self.height = None
-        self.need_flip = False
+        self.need_flip = 0
 
         self.pick_position = None
         self.pick_yaw = None

@@ -125,17 +125,20 @@ class AIOTControlNode(Node):
     def pick_target_callback(self, msg):
         if self.state != STATE_IDLE:
             return
+    
+        result = self.vision_pick_target(msg)
+        if result is None:
+            return
 
-        data = json.loads(msg.data)
-        self.index = int(data['index'])
-        self.height = max(float(data['height']), 0.02)
-        self.need_flip = self.read_bool(data['need_flip'])
+        position, yaw, self.index, self.height, self.need_flip = result
 
-        position = self.read_position(data)
-        yaw = float(data['yaw'])
-        
+        self.height = max(self.height, 0.02)
+
         raw_msg = String()
-        raw_msg.data = json.dumps({'xyz': position.tolist(), 'yaw': yaw})
+        raw_msg.data = json.dumps({
+            'xyz': position.tolist(),
+            'yaw': yaw
+        })
 
         self.state = STATE_WAIT_PICK_POSE
         self.raw_pick_pose_pub.publish(raw_msg)
@@ -212,6 +215,23 @@ class AIOTControlNode(Node):
         if self.state == STATE_WAIT_FLIP2_COMPLIANCE_OFF and not enabled:
             self.start_flip2_escape()
             return
+
+    def vision_pick_target(self, msg):
+        parts = msg.data.strip().split(',')
+
+        if len(parts) != 7:
+            self.get_logger().error(
+                f"/vision/pick_target 파싱 실패: {msg.data!r}"
+            )
+            return None
+
+        idx = int(parts[0])
+        cx, cy, cz, height, angle1 = (float(p) for p in parts[1:6])
+        need_flip = bool(int(parts[6]))
+
+        position = np.array([cx, cy, cz], dtype=float)
+
+        return position, angle1, idx, height, need_flip
 
     def start_pick(self):
         pick_yaw = self.pick_yaw
