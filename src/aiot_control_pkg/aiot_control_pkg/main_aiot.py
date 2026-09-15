@@ -135,13 +135,17 @@ class MainNode(Node):
 
         self.state = WAIT_BOX_SIZES
 
-    def box_sizes_callback(self, msg): ## 비전한테 받는 박스 3개 정보 휴리스틱에게 넘기기, pick, keep, reset 분기
-        if self.state != WAIT_BOX_SIZES:
+    def box_sizes_callback(self, msg):
+        try:
+            json.loads(msg.data)
+
+        except json.JSONDecodeError as exc:
+            self.get_logger().error(
+                f'/vision/box_sizes JSON 파싱 실패: {exc}'
+            )
             return
 
         self.box_sizes_pub.publish(msg)
-
-        self.state = WAIT_PLAN_PICK
         
     def plan_pick_callback(self, msg): ## 휴리스틱이 알려주는 pick 해야하는 인덱스
 

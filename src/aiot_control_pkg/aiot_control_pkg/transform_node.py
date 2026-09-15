@@ -9,23 +9,35 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 
-# Base 좌표계 기준 카메라 원점 좌표
-tx = 0.346  # TODO: camera x position
-ty = 0.0335  # TODO: camera y position
-tz = 0.53  # TODO: camera z position
+# ============================================================
+# Camera -> Base Translation
+# 카메라 원점의 Base 좌표
+# ============================================================
+
+CAMERA_TRANSLATION = np.array([
+    0.346,   # x
+    0.0335,  # y
+    0.53     # z
+], dtype=float)
 
 
-# Base 기준 -> 카메라 기준:
-#   Z -90 deg
-#   X 180 deg
+# ============================================================
+# Camera -> Base Rotation
 #
-# p_base = T_BASE_CAMERA @ p_camera
+# Camera 좌표계를 Base 좌표계 방향으로 변환
+#
+# 현재 관계:
+#   Camera x -> -Base y
+#   Camera y -> -Base x
+#   Camera z -> -Base z
+#
+# p_base = R_BASE_CAMERA @ p_camera + CAMERA_TRANSLATION
+# ============================================================
 
-T_BASE_CAMERA = np.array([
-    [ 0.0, -1.0,  0.0, tx],
-    [-1.0,  0.0,  0.0, ty],
-    [ 0.0,  0.0, -1.0, tz],
-    [ 0.0,  0.0,  0.0, 1.0]
+R_BASE_CAMERA = np.array([
+    [ 0.0, -1.0,  0.0],
+    [-1.0,  0.0,  0.0],
+    [ 0.0,  0.0, -1.0]
 ], dtype=float)
 
 
@@ -35,12 +47,32 @@ class TransformNode(Node):
         super().__init__('transform_node')
 
         # CONTROL -> TRANSFORM
-        self.create_subscription(String, '/raw_pick_pose', self.pick_callback, 10)
-        self.create_subscription(String, '/raw_keep_pick_pose', self.keep_pick_callback, 10)
+        self.create_subscription(
+            String,
+            '/raw_pick_pose',
+            self.pick_callback,
+            10
+        )
+
+        self.create_subscription(
+            String,
+            '/raw_keep_pick_pose',
+            self.keep_pick_callback,
+            10
+        )
 
         # TRANSFORM -> CONTROL
-        self.pick_pub = self.create_publisher(String, '/pick_pose', 10)
-        self.keep_pick_pub = self.create_publisher(String, '/keep_pick_pose', 10)
+        self.pick_pub = self.create_publisher(
+            String,
+            '/pick_pose',
+            10
+        )
+
+        self.keep_pick_pub = self.create_publisher(
+            String,
+            '/keep_pick',
+            10
+        )
 
         self.get_logger().info('TRANSFORM 준비 완료')
 
@@ -70,15 +102,28 @@ class TransformNode(Node):
     # Transform
     # ========================================================
 
-    def transform_and_publish(self, msg, publisher, topic_name):
+    def transform_and_publish(
+        self,
+        msg,
+        publisher,
+        topic_name
+    ):
         try:
             data = json.loads(msg.data)
 
-            position = self.read_position(data)
-            yaw = float(data['yaw'])
+            # Camera 기준 좌표
+            position_camera = self.read_position(data)
 
-            position_base = self.transform_position(position)
-            yaw_base = self.transform_yaw(yaw)
+            # Camera 기준 yaw
+            yaw_camera = float(data['yaw'])
+
+            # 위치 변환
+            position_rotated, position_base = (
+                self.transform_position(position_camera)
+            )
+
+            # yaw 변환
+            yaw_base = self.transform_yaw(yaw_camera)
 
         except (
             json.JSONDecodeError,
@@ -91,8 +136,37 @@ class TransformNode(Node):
             )
             return
 
+        # ====================================================
+        # 변환 결과 출력
+        # ====================================================
+
+        self.get_logger().info(
+            f'\n'
+            f'[{topic_name}]\n'
+            f'Camera 좌표 : '
+            f'[{position_camera[0]:.4f}, '
+            f'{position_camera[1]:.4f}, '
+            f'{position_camera[2]:.4f}]\n'
+            f'Rotation 후 : '
+            f'[{position_rotated[0]:.4f}, '
+            f'{position_rotated[1]:.4f}, '
+            f'{position_rotated[2]:.4f}]\n'
+            f'Base 좌표   : '
+            f'[{position_base[0]:.4f}, '
+            f'{position_base[1]:.4f}, '
+            f'{position_base[2]:.4f}]\n'
+            f'Yaw         : '
+            f'{yaw_camera:.2f}° -> {yaw_base:.2f}°'
+        )
+
+        # ====================================================
+        # Publish
+        # ====================================================
+
         output = {
-            'xyz': position_base.tolist(),
+            'x': float(position_base[0]),
+            'y': float(position_base[1]),
+            'z': float(position_base[2]),
             'yaw': yaw_base
         }
 
@@ -106,68 +180,51 @@ class TransformNode(Node):
     # ========================================================
 
     @staticmethod
-    def transform_position(position):
-        p_camera = np.array([
-            position[0],
-            position[1],
-            position[2],
-            1.0
-        ], dtype=float)
+    def transform_position(position_camera):
 
-        p_base = T_BASE_CAMERA @ p_camera
+        # 1. Rotation
+        position_rotated = (
+            R_BASE_CAMERA @ position_camera
+        )
 
-        return p_base[:3]
+        # 2. Translation
+        position_base = (
+            position_rotated
+            + CAMERA_TRANSLATION
+        )
+
+        return position_rotated, position_base
 
     # ========================================================
     # Camera yaw -> Base yaw
     # ========================================================
 
+    # ========================================================
+# Camera yaw -> Base yaw
+# Vision: 시계방향 +
+# Motor : 반시계방향 +
+# Home  : 180 deg
+# ========================================================
+
     @staticmethod
     def transform_yaw(yaw_deg):
-        yaw_rad = math.radians(yaw_deg)
 
-        direction_camera = np.array([
-            math.cos(yaw_rad),
-            math.sin(yaw_rad),
-            0.0
-        ], dtype=float)
+        yaw_base = 180.0 - yaw_deg
 
-        direction_base = (
-            T_BASE_CAMERA[:3, :3] @ direction_camera
-        )
+        # 0 ~ 360 범위
+        return yaw_base % 360.0
 
-        yaw_base = math.degrees(
-            math.atan2(
-                direction_base[1],
-                direction_base[0]
-            )
-        )
-
-        return (yaw_base + 180.0) % 360.0 - 180.0
-
+    # ========================================================
+    # Position 읽기
     # ========================================================
 
     @staticmethod
     def read_position(data):
-        if 'xyz' in data:
-            position = np.asarray(
-                data['xyz'], dtype=float
-            )
-
-        elif 'position' in data:
-            position = np.asarray(
-                data['position'], dtype=float
-            )
-
-        else:
-            raise KeyError(
-                'xyz 또는 position이 없습니다.'
-            )
-
-        if position.shape != (3,):
-            raise ValueError(
-                'position은 [x, y, z] 형식이어야 합니다.'
-            )
+        position = np.array([
+            float(data['x']),
+            float(data['y']),
+            float(data['z'])
+        ], dtype=float)
 
         if not np.all(np.isfinite(position)):
             raise ValueError(
@@ -176,8 +233,8 @@ class TransformNode(Node):
 
         return position
 
-
 def main(args=None):
+
     rclpy.init(args=args)
 
     node = TransformNode()

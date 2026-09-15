@@ -12,13 +12,13 @@ from std_msgs.msg import Bool, Empty, Float64MultiArray, String, Int8
 from aiot_control_pkg.kinematics_aiot import AIOTKinematics, JOINT_MIN, JOINT_MAX, wrap_to_pi
 from scipy.optimize import least_squares
 
-# X_최적 = 0.30 ~ 0.315
+# topdown max xy = 0.415
+# X = 0.30 -> y = -0.275 ~ 0.275
 
-#### 박스 잡기 범위
+# 박스 잡기 범위
 # pick_Z_MIN = 0.035
 # pick_Z_MAX = 0.155
 # height -> 0.02 ~ 0.08
-####
 
 DOF = 6
 
@@ -34,6 +34,7 @@ FLIP_RISE_Z = 0.20
 FLIP_RISE_STEPS = 6
 
 HOME_Q = np.zeros(DOF, dtype=float)
+CONTROL_READY = np.deg2rad([0.0, -90.0, 0.0, 113.0, 67.0, 0.0])
 
 KEEP_PLACE_POSITIONS = [
     np.array([ 0.08, -0.30, 0.16], dtype=float),
@@ -42,6 +43,7 @@ KEEP_PLACE_POSITIONS = [
 
 STATE_IDLE = 'IDLE'
 STATE_WAIT_PICK_POSE = 'WAIT_PICK_POSE'
+STATE_WAIT_KEEP_POSE = 'WAIT_KEEP_POSE'
 STATE_WAIT_JOINT_STATE = 'WAIT_JOINT_STATE'
 
 STATE_WAIT_APPROACH = 'WAIT_APPROACH'
@@ -82,11 +84,13 @@ class AIOTControlNode(Node):
         self.place_done_pub = self.create_publisher(Bool, '/control/place_done', 10)
         self.keep_done_pub = self.create_publisher(Bool, '/control/keep_done', 10)
         self.raw_pick_pose_pub = self.create_publisher(String, '/raw_pick_pose', 10)
+        self.raw_keep_pick_pose_pub = self.create_publisher(String, '/raw_keep_pick_pose', 10)
 
-        self.create_subscription(String, '/vision/pick_target', self.pick_target_callback, 10)
-        self.create_subscription(String, '/pick_pose', self.pick_pose_callback, 10)
+        self.create_subscription(String, '/vision/pick_target', self.pick_target_callback, 10) ## vision(raw) -> control
+        self.create_subscription(String, '/pick_pose', self.pick_pose_callback, 10) ## transform -> control
         self.create_subscription(String, '/control/plan_place', self.plan_place_callback, 10)
-        self.create_subscription(String, '/vision/keep_pick_pose', self.keep_pick_pose_callback, 10)
+        self.create_subscription(String, '/vision/keep_pick_pose', self.keep_pick_pose_callback, 10) ## vision(raw) -> control
+        self.create_subscription(String, '/keep_pick', self.keep_pick_callback, 10) ## transform -> control
         self.create_subscription(Empty, '/arm/motion_done', self.motion_done_callback, 10)
         self.create_subscription(JointState, '/joint_states', self.joint_state_callback, 10)
         self.create_subscription(Bool, '/arm/joint6_compliance_done', self.joint6_compliance_done_callback, 10)
@@ -122,7 +126,7 @@ class AIOTControlNode(Node):
 
         self.get_logger().info('CONTROL 준비 완료')
 
-    def pick_target_callback(self, msg):
+    def pick_target_callback(self, msg):  ## vision(raw) -> control
         if self.state != STATE_IDLE:
             return
     
@@ -136,14 +140,15 @@ class AIOTControlNode(Node):
 
         raw_msg = String()
         raw_msg.data = json.dumps({
-            'xyz': position.tolist(),
+            'x': float(position[0]),
+            'y': float(position[1]),
+            'z': float(position[2]),
             'yaw': yaw
         })
-
         self.state = STATE_WAIT_PICK_POSE
         self.raw_pick_pose_pub.publish(raw_msg)
 
-    def pick_pose_callback(self, msg):
+    def pick_pose_callback(self, msg):  ## transform -> control
         if self.state != STATE_WAIT_PICK_POSE:
             return
 
@@ -168,16 +173,57 @@ class AIOTControlNode(Node):
         self.state = STATE_WAIT_JOINT_STATE
         self.joint_state_request_pub.publish(Empty())
 
-    def keep_pick_pose_callback(self, msg):
+    def keep_pick_pose_callback(self, msg):  ## vision(raw) -> control
         if self.state != STATE_IDLE:
             return
 
+        try:
+            data = json.loads(msg.data)
+
+            position = np.array([
+                float(data['x']),
+                float(data['y']),
+                float(data['z'])
+            ], dtype=float)
+
+            angle = float(data['angle'])
+
+        except (
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            ValueError
+        ) as exc:
+            self.get_logger().error(
+                f'/vision/keep_pick_pose JSON 파싱 실패: {exc}'
+            )
+            return
+
+        raw_msg = String()
+        raw_msg.data = json.dumps({
+            'x': float(position[0]),
+            'y': float(position[1]),
+            'z': float(position[2]),
+            'yaw': angle
+        })
+
+        self.state = STATE_WAIT_KEEP_POSE
+        self.raw_keep_pick_pose_pub.publish(raw_msg)
+
+    def keep_pick_callback(self, msg):  ## transform -> control
+        if self.state != STATE_WAIT_KEEP_POSE:
+            return
+
         data = json.loads(msg.data)
+
         self.keep_position = self.read_position(data)
-        self.keep_yaw = math.radians(float(data['yaw']))
+        self.keep_yaw = math.radians(
+            float(data['yaw'])
+        )
 
         self.task = 'keep_pick'
         self.state = STATE_WAIT_JOINT_STATE
+
         self.joint_state_request_pub.publish(Empty())
 
     def joint_state_callback(self, msg):
@@ -205,7 +251,7 @@ class AIOTControlNode(Node):
 
         if self.state == STATE_WAIT_FLIP13_COMPLIANCE_OFF and not enabled:
             self.state = STATE_WAIT_HOME
-            self.publish_joint_target(HOME_Q)
+            self.publish_joint_target(CONTROL_READY)
             return
 
         if self.state == STATE_WAIT_FLIP2_COMPLIANCE_ON and enabled:
@@ -217,21 +263,29 @@ class AIOTControlNode(Node):
             return
 
     def vision_pick_target(self, msg):
-        parts = msg.data.strip().split(',')
+        try:
+            data = json.loads(msg.data)
 
-        if len(parts) != 7:
+            idx = int(data['idx'])
+
+            position = np.array([
+                float(data['x']),
+                float(data['y']),
+                float(data['z'])
+            ], dtype=float)
+
+            height = float(data['height'])
+            angle = float(data['angle'])
+            need_flip = bool(int(data['need_flip']))
+
+        except (
+            json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             self.get_logger().error(
-                f"/vision/pick_target 파싱 실패: {msg.data!r}"
+                f'/vision/pick_target JSON 파싱 실패: {exc}'
             )
             return None
 
-        idx = int(parts[0])
-        cx, cy, cz, height, angle1 = (float(p) for p in parts[1:6])
-        need_flip = bool(int(parts[6]))
-
-        position = np.array([cx, cy, cz], dtype=float)
-
-        return position, angle1, idx, height, need_flip
+        return (position, angle, idx, height, need_flip)
 
     def start_pick(self):
         pick_yaw = self.pick_yaw
@@ -275,30 +329,39 @@ class AIOTControlNode(Node):
         self.publish_joint_target(self.approach_q)
 
     def solve_topdown_path(self, position, previous_q, yaw, name):
-        for clearance in (0.10, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04):
-            approach = position.copy()
-            approach[2] += clearance
+        approach = position.copy()
+        approach[2] += 0.03
 
-            try:
-                q_approach = self.solve_topdown_pose(approach, previous_q, yaw)
-                q_target = self.solve_topdown_pose(position, q_approach, yaw)
-                return q_approach, q_target, q_approach.copy()
-            except RuntimeError:
-                continue
-
-        raise RuntimeError(f'{name} 탑다운 경로 생성 실패: position={position.tolist()}')
+        try:
+            q_approach = self.solve_topdown_pose(approach, previous_q, yaw)
+            q_target = self.solve_topdown_pose(position, q_approach, yaw)
+            return q_approach, q_target, q_approach.copy()
+        except RuntimeError:
+            raise RuntimeError(f'{name} 탑다운 경로 생성 실패: position={position.tolist()}')
 
     def solve_topdown_pose(self, position, previous_q, yaw):
         position = np.asarray(position, dtype=float)
         previous_q = np.asarray(previous_q, dtype=float)
         target_axis = np.array([0.0, 0.0, -1.0])
 
+        q1_target = math.atan2(position[1], position[0])
+
         seeds = [previous_q[:5].copy()]
 
-        for q3_deg in (-90.0, -60.0, -30.0, 0.0, 30.0, 60.0, 90.0):
-            seed = previous_q[:5].copy()
-            seed[2] = math.radians(q3_deg)
-            seeds.append(np.clip(seed, JOINT_MIN[:5], JOINT_MAX[:5]))
+        for q1 in (previous_q[0], q1_target):
+            for q3_deg in (-90.0, -60.0, -30.0, 0.0, 30.0, 60.0, 90.0):
+                seed = previous_q[:5].copy()
+
+                seed[0] = q1
+                seed[2] = math.radians(q3_deg)
+
+                seeds.append(
+                    np.clip(
+                        seed,
+                        JOINT_MIN[:5],
+                        JOINT_MAX[:5]
+                    )
+                )
 
         candidates = []
 
@@ -315,7 +378,7 @@ class AIOTControlNode(Node):
                 position_error = transform[:3, 3] - position
                 axis_error = transform[:3, 2] - target_axis
                 joint_delta = (q[:5] - previous_q[:5] + np.pi) % (2.0 * np.pi) - np.pi
-                return np.concatenate([80.0 * position_error, 0.8 * axis_error, 0.1 * joint_delta])
+                return np.concatenate([80.0 * position_error, 0.8 * axis_error, 0.01 * joint_delta])
 
             result = least_squares(residual, seed, bounds=(JOINT_MIN[:5], JOINT_MAX[:5]), max_nfev=500)
 
@@ -323,8 +386,14 @@ class AIOTControlNode(Node):
             transform = self.kinematics.fk_matrix(q)
             position_error = np.linalg.norm(transform[:3, 3] - position)
             axis_error = np.linalg.norm(transform[:3, 2] - target_axis)
-
-            candidates.append((position_error + axis_error, position_error, axis_error, q))
+            self.get_logger().info(
+                f'IK candidate: '
+                f'pos={position_error:.4f}m, '
+                f'axis={axis_error:.4f}, '
+                f'q={np.rad2deg(q).round(1).tolist()}'
+            )
+            score = (position_error / 0.005 + axis_error / 0.02)
+            candidates.append((score, position_error, axis_error, q))
 
         candidates.sort(key=lambda x: x[0])
         _, position_error, axis_error, q = candidates[0]
@@ -615,7 +684,7 @@ class AIOTControlNode(Node):
                 position_error = transform[:3, 3] - position
                 axis_error = transform[:3, 2] - target_axis
                 joint_delta = (q[:5] - previous_q[:5] + np.pi) % (2.0 * np.pi) - np.pi
-                return np.concatenate([100.0 * position_error, 20.0 * axis_error, 0.02 * joint_delta])
+                return np.concatenate([80.0 * position_error, 10.0 * axis_error, 0.05 * joint_delta])
 
             result = least_squares(residual, seed, bounds=(JOINT_MIN[:5], JOINT_MAX[:5]), max_nfev=500)
 
@@ -677,7 +746,7 @@ class AIOTControlNode(Node):
 
             elif self.task in ('place', 'keep_place'):
                 self.state = STATE_WAIT_HOME
-                self.publish_joint_target(HOME_Q)
+                self.publish_joint_target(CONTROL_READY)
 
             elif self.task == 'keep_pick':
                 self.start_keep_place()
@@ -715,7 +784,7 @@ class AIOTControlNode(Node):
 
         if self.state == STATE_WAIT_FLIP2_ESCAPE:
             self.state = STATE_WAIT_HOME
-            self.publish_joint_target(HOME_Q)
+            self.publish_joint_target(CONTROL_READY)
             return
 
         if self.state == STATE_WAIT_HOME:
@@ -753,7 +822,7 @@ class AIOTControlNode(Node):
 
             else:
                 self.state = STATE_WAIT_HOME
-                self.publish_joint_target(HOME_Q)
+                self.publish_joint_target(CONTROL_READY)
 
             return
 
@@ -784,28 +853,11 @@ class AIOTControlNode(Node):
 
     @staticmethod
     def read_position(data):
-        if 'xyz' in data:
-            position = np.asarray(data['xyz'], dtype=float)
-        elif 'position' in data:
-            position = np.asarray(data['position'], dtype=float)
-        else:
-            position = np.array([float(data['x']), float(data['y']), float(data['z'])], dtype=float)
-
-        return position
-
-    @staticmethod
-    def read_bool(value):
-        if isinstance(value, bool):
-            return value
-
-        if isinstance(value, str):
-            value = value.strip().lower()
-            if value == 'true':
-                return True
-            if value == 'false':
-                return False
-
-        return
+        return np.array([
+            float(data['x']),
+            float(data['y']),
+            float(data['z'])
+        ], dtype=float)
 
     def reset_task(self):
         self.state = STATE_IDLE
