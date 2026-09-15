@@ -56,6 +56,7 @@ setup(
             'motor_control_node = aiot_control_pkg.motor_control_node:main',
             'motor_compliance_node = aiot_control_pkg.motor_compliance_node:main',
             'aiot_compliance_node = aiot_control_pkg.aiot_compliance_node:main',
+            'box_detect_node = aiot_control_pkg.box_detect_node:main',
             
         ],
     },
