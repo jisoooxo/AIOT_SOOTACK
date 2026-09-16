@@ -41,6 +41,7 @@ JOINT6_ID = 6
 JOINT6_ADAPTIVE_CURRENT_RAW = 70
 
 HOME_RAW = np.full(DOF, 2048, dtype=int)
+CONTROL_READY = np.deg2rad([0.0, -90.0, 0.0, 113.0, 67.0, 0.0])
 JOINT_MIN = np.deg2rad([-170.0, -120.0, -170.0, -150.0, -120.0, -360.0])
 JOINT_MAX = np.deg2rad([170.0, 120.0, 170.0, 150.0, 120.0, 360.0])
 
@@ -112,7 +113,7 @@ class MotorControlNode(Node):
         self.start_home()
 
     def start_home(self):
-        self.q_goal = self.raw_to_q(HOME_RAW)
+        self.q_goal = CONTROL_READY
         self.q_start = self.read_current_q()
         self.q_cmd_prev = self.q_start.copy()
         self.duration = self.move_duration(self.q_start, self.q_goal)

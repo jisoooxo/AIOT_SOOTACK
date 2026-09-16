@@ -484,7 +484,17 @@ class AIOTControlNode(Node):
         )
 
     def start_flip2(self):
-        q_parallel = self.solve_parallel_orientation(self.current_q)
+
+        place_x = self.pick_position[0] + FLIP_PLACE_X_OFFSET
+        place_y = self.pick_position[1]
+
+        q1_target = math.atan2(place_y, place_x)
+
+        q_parallel = self.solve_parallel_orientation(
+            self.current_q,
+            q1_target
+        )
+
         self.state = STATE_WAIT_FLIP2_PARALLEL
         self.publish_joint_target(q_parallel)
 
@@ -593,47 +603,71 @@ class AIOTControlNode(Node):
         self.joint6_compliance_pub.publish(msg)
 
 
-    def solve_parallel_orientation(self, previous_q):
+    def solve_parallel_orientation(self, previous_q, q1_target):
         previous_q = np.asarray(previous_q, dtype=float)
-        seeds = [previous_q[:5].copy()]
 
-        for q3_deg in (-90.0, -60.0, -30.0, 30.0, 60.0, 90.0):
-            seed = previous_q[:5].copy()
-            seed[2] = math.radians(q3_deg)
-            seeds.append(np.clip(seed, JOINT_MIN[:5], JOINT_MAX[:5]))
+        active_indices = np.array([1, 3, 4], dtype=int)
 
-        candidates = []
+        radial_axis = np.array([
+            math.cos(q1_target),
+            math.sin(q1_target),
+            0.0
+        ])
 
-        for target_axis in (np.array([1.0, 0.0, 0.0]), np.array([-1.0, 0.0, 0.0])):
-            for seed in seeds:
-                def build_q(active_q):
-                    q = previous_q.copy()
-                    q[:5] = active_q
-                    q[5] = previous_q[5]
-                    return q
+        previous_axis = self.kinematics.fk_matrix(previous_q)[:3, 2]
 
-                def residual(active_q):
-                    q = build_q(active_q)
-                    axis_error = self.kinematics.fk_matrix(q)[:3, 2] - target_axis
-                    joint_delta = (q[:5] - previous_q[:5] + np.pi) % (2.0 * np.pi) - np.pi
-                    return np.concatenate([20.0 * axis_error, 0.02 * joint_delta])
+        target_axis = (
+            radial_axis
+            if np.dot(previous_axis, radial_axis) >= 0.0
+            else -radial_axis
+        )
 
-                result = least_squares(residual, seed, bounds=(JOINT_MIN[:5], JOINT_MAX[:5]), max_nfev=500)
+        seed = previous_q[active_indices].copy()
 
-                q = build_q(result.x)
-                axis_error = np.linalg.norm(self.kinematics.fk_matrix(q)[:3, 2] - target_axis)
-                joint_motion = np.linalg.norm((q[:5] - previous_q[:5] + np.pi) % (2.0 * np.pi) - np.pi)
+        def build_q(active_q):
+            q = previous_q.copy()
 
-                candidates.append((axis_error, joint_motion, q))
+            q[0] = q1_target
+            q[2] = previous_q[2]
+            q[active_indices] = active_q
 
-        candidates.sort(key=lambda x: (x[0], x[1]))
-        parallel_error, _, q = candidates[0]
+            return q
+
+        def residual(active_q):
+            q = build_q(active_q)
+
+            axis_error = self.kinematics.fk_matrix(q)[:3, 2] - target_axis
+
+            joint_delta = (
+                q[active_indices] - previous_q[active_indices] + np.pi
+            ) % (2.0 * np.pi) - np.pi
+
+            return np.concatenate([
+                20.0 * axis_error,
+                0.02 * joint_delta
+            ])
+
+        result = least_squares(
+            residual,
+            seed,
+            bounds=(JOINT_MIN[active_indices], JOINT_MAX[active_indices]),
+            max_nfev=500
+        )
+
+        q = build_q(result.x)
+
+        parallel_error = np.linalg.norm(self.kinematics.fk_matrix(q)[:3, 2] - target_axis)
 
         if parallel_error > 0.05:
-            raise RuntimeError(f'평행 자세 오차 초과: {parallel_error:.4f}')
+            raise RuntimeError(
+                f'평행 자세 오차 초과: {parallel_error:.4f}'
+            )
 
         self.get_logger().info(
-            f'평행 자세 정렬: parallel_error={parallel_error:.4f}, '
+            f'평행 자세 정렬: '
+            f'q1={math.degrees(q[0]):.1f}deg, '
+            f'q3={math.degrees(q[2]):.1f}deg, '
+            f'parallel_error={parallel_error:.4f}, '
             f'q={np.rad2deg(q).round(1).tolist()}'
         )
 
@@ -643,54 +677,91 @@ class AIOTControlNode(Node):
         position = np.asarray(position, dtype=float)
         previous_q = np.asarray(previous_q, dtype=float)
 
-        seeds = [previous_q[:5].copy()]
+        q1_target = math.atan2(
+            position[1],
+            position[0]
+        )
 
-        for q3_deg in (-90.0, -60.0, -30.0, 30.0, 60.0, 90.0):
-            seed = previous_q[:5].copy()
-            seed[2] = math.radians(q3_deg)
-            seeds.append(np.clip(seed, JOINT_MIN[:5], JOINT_MAX[:5]))
+        active_indices = np.array([1, 3, 4], dtype=int)
+
+        seed = previous_q[active_indices].copy()
+
+        radial_axis = np.array([
+            math.cos(q1_target),
+            math.sin(q1_target),
+            0.0
+        ])
 
         previous_axis = self.kinematics.fk_matrix(previous_q)[:3, 2]
-        target_axis = np.array([1.0, 0.0, 0.0]) if previous_axis[0] >= 0.0 else np.array([-1.0, 0.0, 0.0])
 
-        candidates = []
+        target_axis = (
+            radial_axis
+            if np.dot(previous_axis, radial_axis) >= 0.0
+            else -radial_axis
+        )
 
-        for seed in seeds:
-            def build_q(active_q):
-                q = previous_q.copy()
-                q[:5] = active_q
-                q[5] = previous_q[5]
-                return q
+        def build_q(active_q):
+            q = previous_q.copy()
 
-            def residual(active_q):
-                q = build_q(active_q)
-                transform = self.kinematics.fk_matrix(q)
-                position_error = transform[:3, 3] - position
-                axis_error = transform[:3, 2] - target_axis
-                joint_delta = (q[:5] - previous_q[:5] + np.pi) % (2.0 * np.pi) - np.pi
-                return np.concatenate([80.0 * position_error, 10.0 * axis_error, 0.05 * joint_delta])
+            q[0] = q1_target
+            q[2] = previous_q[2]
+            q[active_indices] = active_q
 
-            result = least_squares(residual, seed, bounds=(JOINT_MIN[:5], JOINT_MAX[:5]), max_nfev=500)
+            return q
 
-            q = build_q(result.x)
+        def residual(active_q):
+            q = build_q(active_q)
+
             transform = self.kinematics.fk_matrix(q)
-            position_error = np.linalg.norm(transform[:3, 3] - position)
-            parallel_error = np.linalg.norm(transform[:3, 2] - target_axis)
 
-            candidates.append((position_error + parallel_error, position_error, parallel_error, q))
+            position_error = transform[:3, 3] - position
 
-        candidates.sort(key=lambda x: x[0])
-        _, position_error, parallel_error, q = candidates[0]
+            axis_error = transform[:3, 2] - target_axis
+
+            joint_delta = (
+                q[active_indices] - previous_q[active_indices] + np.pi
+            ) % (2.0 * np.pi) - np.pi
+
+            return np.concatenate([
+                80.0 * position_error,
+                10.0 * axis_error,
+                0.05 * joint_delta
+            ])
+
+        result = least_squares(
+            residual,
+            seed,
+            bounds=(JOINT_MIN[active_indices], JOINT_MAX[active_indices]),
+            max_nfev=500
+        )
+
+        q = build_q(result.x)
+
+        transform = self.kinematics.fk_matrix(q)
+
+        position_error = np.linalg.norm(transform[:3, 3] - position)
+
+        parallel_error = np.linalg.norm(transform[:3, 2] - target_axis)
 
         if position_error > 0.005:
-            raise RuntimeError(f'평행 IK 위치 오차 초과: {position_error:.4f}m')
+            raise RuntimeError(
+                f'평행 IK 위치 오차 초과: '
+                f'{position_error:.4f}m'
+            )
 
         if parallel_error > 0.05:
-            raise RuntimeError(f'평행 IK 자세 오차 초과: {parallel_error:.4f}')
+            raise RuntimeError(
+                f'평행 IK 자세 오차 초과: '
+                f'{parallel_error:.4f}'
+            )
 
         self.get_logger().info(
-            f'평행 IK: target={position.round(4).tolist()}, '
-            f'pos_error={position_error:.4f}m, parallel_error={parallel_error:.4f}, '
+            f'평행 IK: '
+            f'target={position.round(4).tolist()}, '
+            f'q1={math.degrees(q[0]):.1f}deg, '
+            f'q3={math.degrees(q[2]):.1f}deg, '
+            f'pos_error={position_error:.4f}m, '
+            f'parallel_error={parallel_error:.4f}, '
             f'q={np.rad2deg(q).round(1).tolist()}'
         )
 
