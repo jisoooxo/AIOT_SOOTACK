@@ -15,18 +15,18 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool, Int8, String
 
-# import pick_comm
-# import box_capture
-# from box_capture import W, H
-# # ---- 크기 계산 방식 ----
-# # from box_size_plane import compute_box_size
-# from box_size_plane2 import compute_box_size2 as compute_box_size
-# from box_size_3zone import compute_box_size
+import pick_comm
+import box_capture
+from box_capture import W, H
+# ---- 크기 계산 방식 ----
+# from box_size_plane import compute_box_size
+from box_size_plane2 import compute_box_size2 as compute_box_size
+#from box_size_3zone import compute_box_size
 
-from . import pick_comm
-from . import box_capture
-from .box_capture import W, H
-from .box_size_plane2 import compute_box_size2 as compute_box_size
+# from . import pick_comm
+# from . import box_capture
+# from .box_capture import W, H
+# from .box_size_plane2 import compute_box_size2 as compute_box_size
 
 
 # ---- 프레임 누적 파라미터 ----
@@ -119,9 +119,11 @@ class BoxDetectNode(Node):
         # 원소 형식은 accum_buf 엔트리와 동일: (frame_no, real_w, real_h, z_cm, fill_ratio, angle_deg, cx_cm, cy_cm, cz_cm)
         self.reflip_pending = {}
 
-        # 처리 해상도(W, H)는 그대로 두고 화면에 보여지는 창 크기만 축소
+        # 처리 해상도(W, H)는 그대로 두고, 화면 표시용으로만 이미지 자체를 축소해서 보여줌
+        # (cv2.resizeWindow로 창만 줄이면 표시 시점에 저품질 스케일링이 걸려 선/텍스트가 깨져 보임)
+        self.display_scale = 0.5
         cv2.namedWindow("box detect", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("box detect", W // 2, H // 2)
+        cv2.resizeWindow("box detect", int(W * self.display_scale), int(H * self.display_scale))
 
     # --------------------------------------------------------------
     # 휴리스틱 -> 비전 (집을 것)
@@ -226,7 +228,7 @@ class BoxDetectNode(Node):
             return True  # 깨진 프레임 - 계속 진행
 
         if valid is None or not np.any(valid):
-            cv2.imshow("box detect", color_img)
+            self._show(color_img)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 return False
             return True
@@ -471,10 +473,16 @@ class BoxDetectNode(Node):
         silhouette_vis[sil_used_vis] = (0, 255, 255)  # 노란색
         color_img = cv2.addWeighted(color_img, 1.0, silhouette_vis, 0.4, 0)  # 실루엣 시각화
 
-        cv2.imshow("box detect", color_img)
+        self._show(color_img)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             return False
         return True
+
+    def _show(self, color_img):
+        """전체 해상도로 그린 결과를 화면 표시용으로만 축소해서 보여줌 (INTER_AREA로 깔끔하게)."""
+        disp = cv2.resize(color_img, None, fx=self.display_scale, fy=self.display_scale,
+                           interpolation=cv2.INTER_AREA)
+        cv2.imshow("box detect", disp)
 
     def shutdown(self):
         self.capture.shutdown()

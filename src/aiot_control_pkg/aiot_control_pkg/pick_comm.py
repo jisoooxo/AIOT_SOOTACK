@@ -67,8 +67,8 @@ def TO_JSON_vision_pick_target(pick):
         'y': round(pick['cy'] * 0.01, 3),
         'z': round(pick['cz'] * 0.01, 3),
         'height': round(pick['height'] * 0.01, 3),
-        'angle': round(pick['angle1'], 2),
-        'need_flip': bool(pick['need_flip']),
+        'angle': round(pick['angle'], 2),
+        'need_flip': int(pick['need_flip']),
     })
 
 
@@ -98,7 +98,7 @@ def TO_JSON_vision_box_sizes(entries):
     -> '/vision/box_sizes'로 보낼 JSON 배열 문자열. x/y/z는 m 단위로 변환해서 보냄.
     """
     return json.dumps([
-        {'id': box_id, 'x': round(x * 0.01, 3), 'y': round(y * 0.01, 3), 'z': round(z * 0.01, 3)}
+        {'idx': box_id, 'x': round(x * 0.01, 3), 'y': round(y * 0.01, 3), 'z': round(z * 0.01, 3)}
         for box_id, x, y, z in entries
     ])
 
@@ -222,6 +222,6 @@ def compute_pick_target(idx, goal_face, vertical_axis, accum_result):
         'idx': idx,
         'cx': avg_cx, 'cy': avg_cy, 'cz': avg_cz,
         'height': height_dim / 2 + belt_height,  
-        'angle1': angle1,
-        'need_flip': need_flip,
+        'angle': angle1,
+        'need_flip': int(need_flip),
     }
