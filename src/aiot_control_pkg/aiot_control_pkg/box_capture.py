@@ -15,12 +15,16 @@ import torch
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 
+pc = "JISU"
+# pc = "JUNMI"
+
 # ----------------------------------------------------------------------
 # 카메라/스트림 파라미터
 # ----------------------------------------------------------------------
 W, H, FPS = 1280, 720, 30
 ROI_X_MIN, ROI_X_MAX = 200, 1200
 ROI_Y_MIN, ROI_Y_MAX = 250, 650
+resize = 2 # 1/2배로 축소시켜서 imshow 띄움
 
 # 리얼센스 설정 리셋
 HW_RESET_ON_START = False    # False로 하면 리셋 안하고 이전 설정 그대로. 리셋하면 노출/화이트밸런스 초기화됨. 
@@ -68,16 +72,20 @@ FLAT_WIN = 10                # 로컬 윈도우 크기 (px)
 
 BOX_EXPAND_RATIO = 0.2  # SAM2 박스 프롬프트 확대 비율
 
-DEBUG_ROUGH = True  # 대충 위치 잡기 시각화
+DEBUG_ROUGH = False  # 대충 위치 잡기 시각화
 
 # ----------------------------------------------------------------------
 # SAM2 설정
 # ----------------------------------------------------------------------
-# SAM2_CONFIG = "configs/sam2.1/sam2.1_hiera_t.yaml"          # 가장 작은 모델로..
-# SAM2_CHECKPOINT   = "/home/leejunmi/sam2/checkpoints/sam2.1_hiera_tiny.pt"
 
-SAM2_CKPT   = '/home/pc/sam2/checkpoints/sam2.1_hiera_tiny.pt'
-SAM2_CONFIG = "configs/sam2.1/sam2.1_hiera_t.yaml"
+if pc == "JISU":
+    SAM2_CKPT   = '/home/pc/sam2/checkpoints/sam2.1_hiera_tiny.pt'
+    SAM2_CONFIG = "configs/sam2.1/sam2.1_hiera_t.yaml"
+elif pc == "JUNMI":
+    SAM2_CONFIG = "configs/sam2.1/sam2.1_hiera_t.yaml"          # 가장 작은 모델로..
+    SAM2_CHECKPOINT   = "/home/leejunmi/sam2/checkpoints/sam2.1_hiera_tiny.pt"
+
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -170,22 +178,16 @@ class BoxCapture:
         self.y0, self.y1 = max(0, ROI_Y_MIN), min(H, ROI_Y_MAX)
         self.roi_mask[self.y0:self.y1, self.x0:self.x1] = True
 
+        # 처리 해상도(W, H)는 그대로 두고 화면에 보여지는 창 크기만 축소
+        cv2.namedWindow("rough detect", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("rough detect", W // resize, H // resize) 
+
 
     # --------------------------------------------------------------
     # 필터 적용 + 높이 기반 위치 잡기 + SAM2 mask 추출
     # --------------------------------------------------------------
     def get_frame(self, detect=True):
-        """반환:
-            None                                    -> 스트림 끝(bag 재생 종료). 호출부는 종료 처리.
-            (None, None, None, [])                  -> 이번 사이클은 깨진 프레임(뭘 그릴 필요도 없음).
-            (color_img, depth_m, valid, candidates)  -> candidates는 []일 수 있음(대충 위치 잡기에서
-                                                        아무것도 안 걸린 경우). valid가 전부 False일
-                                                        수도 있음 - 이때 candidates는 항상 [].
-
-        detect=False 면 캡처(카메라 on, color_img/depth_m는 항상 받아옴)까지만 하고 대충 위치
-        잡기+SAM2(제일 무거운 부분)는 건너뛰어 candidates=[] 로 바로 반환한다. 검출 시작 신호
-        (/main/vision_start) 오기 전에도 카메라 프리뷰는 보여주되 GPU/연산은 아끼고 싶을 때 씀.
-
+        """
         candidates 원소: {'seg_mask': bool(H,W) SAM2 마스크, 'bcx': int, 'bcy': int(컴포넌트 중심 픽셀)}
         """
         try:
@@ -291,7 +293,9 @@ class BoxCapture:
                 candidates.append({'seg_mask': masks[j].astype(bool), 'bcx': bcx, 'bcy': bcy})
 
         return color_img, depth_m, valid, candidates
-    
+
+# ----------------------------------------------------------------------------------------------------------------------------# --------------------------------------------------------------
+
 
     # --------------------------------------------------------------
     # RealSense 센서 설정 헬퍼
@@ -383,7 +387,7 @@ class BoxCapture:
                     (10, Hh - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
         montage = np.vstack([np.hstack([p1, p2]), np.hstack([p3, p4])])
-        montage = cv2.resize(montage, (montage.shape[1] // 2, montage.shape[0] // 2))
+        montage = cv2.resize(montage, (montage.shape[1] // resize, montage.shape[0] // resize))
         cv2.imshow("rough detect", montage)
 
 

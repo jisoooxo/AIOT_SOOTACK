@@ -1,12 +1,12 @@
 """
-PickPlan (휴리스틱 -> vision, /main/plan_pick)  - 지금 집을 박스 1개에 대한 계획
-    "idx,goal_face,vertical_axis,pick"
-    예: "2,yz,z,pick"   (idx=2, goal_face='yz', vertical_axis='z')
+PickPlan (Main -> vision, /main/plan_pick)  - 지금 집을 박스 1개에 대한 계획, JSON
+    {"idx": int, "face": str, "axis": str}
+    예: {"idx": 2, "face": "yz", "axis": "z"}
+    이 토픽은 pick 전용이라 별도 상태/구분 필드 없음 (keep은 /main/keep_ready로 분리돼 있음)
 
-PickTarget (vision -> 제어, /vision/pick_target)
-    "idx,cx,cy,cz,height,angle1,need_flip"
-    예: "2,12.30,-4.50,38.20,7.10,15.20,1"
-    need_flip은 '1'/'0'으로 표기
+PickTarget (vision -> 제어, /vision/pick_target)  - JSON, 7개 필드
+    {"idx": int, "x": m, "y": m, "z": m, "height": m, "angle": deg, "need_flip": bool}
+    예: {"idx": 2, "x": 0.123, "y": -0.045, "z": 0.382, "height": 0.071, "angle": 15.2, "need_flip": true}
 
 FlipDone (제어 -> vision, /control/flip_done)  - 뒤집기 완료 신호 (need_flip=True였던 idx에 대해서만 옴)
     std_msgs/Int8, msg.data = idx (문자열 아님, 파싱 불필요)
@@ -17,43 +17,59 @@ PlaceDone (제어 -> vision, /place_done)  - 동작 완료(박스가 프레임 �
     예: "2"
 
 SecondPickPlan (vision -> 제어, /vision/pick_target)  - /flip_done 받은 후 재측정한 2차 정보.
-    need_flip=True였던 idx에 대해서만 발행됨.
-    "idx,cx,cy,cz,height,angle1,need_flip"
-    예: "2,12.30,-4.50,38.20,0,15.20,0"
+    need_flip=True였던 idx에 대해서만 발행됨. PickTarget과 동일한 JSON 스키마.
+
+KeepReady (Main -> vision, /main/keep_ready)  - keep할 박스 idx
+    std_msgs/Int8, msg.data = idx (문자열/JSON 아님, 파싱 불필요)
+    예: 2
+
+KeepPickPose (vision -> 제어, /vision/keep_pick_pose)  - JSON, 4개 필드
+    {"x": m, "y": m, "z": m, "angle": deg}
+    예: {"x": 0.123, "y": -0.045, "z": 0.382, "angle": 15.2}
+
+BoxSizes (vision -> Main, /vision/box_sizes)  - 박스 3개 정보를 한 번에, JSON 배열
+    [{"id": int, "x": m, "y": m, "z": m}, ...]
+    예: [{"id": 1, "x": 0.102, "y": 0.201, "z": 0.053}, {"id": 2, ...}, {"id": 3, ...}]
 ---------------------------------------------------------------------------
 """
 
+import json
+
 belt_height = 0 # cm 기준, robot base <-> belt까지 높이
 
-def parse_pick_plan(msg_str):
+def FROM_JSON_main_plan_pick(msg_str):
     """
     '/main/plan_pick' String 메시지(msg.data) 받음
-    "idx,goal_face,vertical_axis,pick" -> dict
-    4번째 필드는 항상 "pick" 
+    {"idx": int, "face": str, "axis": str} -> dict
     """
-    parts = msg_str.strip().split(',')
-    if len(parts) != 4:
-        raise ValueError(f"PickPlan 문자열 형식 오류(필드 4개 필요): {msg_str!r}")
-    idx_s, goal_face, vertical_axis, tag = parts
-    if tag.strip().lower() != 'pick':
-        raise ValueError(f"PickPlan 4번째 필드는 'pick'이어야 함: {msg_str!r}")
+    try:
+        data = json.loads(msg_str)
+        idx = int(data['idx'])
+        goal_face = str(data['face']).strip()
+        vertical_axis = str(data['axis']).strip()
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"PickPlan JSON 형식 오류: {msg_str!r} ({exc})")
+  
     return {
-        'idx': int(idx_s),
-        'goal_face': goal_face.strip(), # 공백같은거 제거
-        'vertical_axis': vertical_axis.strip(),
+        'idx': idx,
+        'goal_face': goal_face,
+        'vertical_axis': vertical_axis,
     }
 
 
-def serialize_grip_target(payload):
+def TO_JSON_vision_pick_target(pick):
     """
-    build_grip_target()이 반환한 dict -> '/vision/pick_target' String 메시지(msg.data)로 보낼 문자열.
+    compute_pick_target()이 반환한 dict -> '/vision/pick_target' String 메시지(msg.data)로 보낼 JSON 문자열.
     """
-    return (
-        f"{payload['idx']},"
-        f"{payload['cx']*0.01:.3f},{payload['cy']*0.01:.3f},{payload['cz']*0.01:.3f},"
-        f"{payload['height']*0.01:.3f},{payload['angle1']:.2f},"
-        f"{1 if payload['need_flip'] else 0}"
-    )
+    return json.dumps({
+        'idx': pick['idx'],
+        'x': round(pick['cx'] * 0.01, 3),
+        'y': round(pick['cy'] * 0.01, 3),
+        'z': round(pick['cz'] * 0.01, 3),
+        'height': round(pick['height'] * 0.01, 3),
+        'angle': round(pick['angle1'], 2),
+        'need_flip': bool(pick['need_flip']),
+    })
 
 
 def parse_idx_message(msg_str):
@@ -62,6 +78,29 @@ def parse_idx_message(msg_str):
     "2" -> 2
     """
     return int(msg_str.strip())
+
+
+def TO_JSON_vision_keep_pick_pose(cx, cy, cz, angle):
+    """
+    keep_pick_pose_callback에서 계산한 평균 위치/각도(cm) -> '/vision/keep_pick_pose'로
+    """
+    return json.dumps({
+        'x': round(cx * 0.01, 3), # 미터변환
+        'y': round(cy * 0.01, 3),
+        'z': round(cz * 0.01, 3),
+        'angle': round(angle, 2),
+    })
+
+
+def TO_JSON_vision_box_sizes(entries):
+    """
+    entries: [(box_id, avg_w, avg_h, avg_z), ...] (cm 단위)
+    -> '/vision/box_sizes'로 보낼 JSON 배열 문자열. x/y/z는 m 단위로 변환해서 보냄.
+    """
+    return json.dumps([
+        {'id': box_id, 'x': round(x * 0.01, 3), 'y': round(y * 0.01, 3), 'z': round(z * 0.01, 3)}
+        for box_id, x, y, z in entries
+    ])
 
 
 # ----------------------------------------------------------------------
@@ -152,77 +191,37 @@ def compute_second_angle(avg_angle_short, rotate_inplace):
     return angle2_base
 
 
-def build_grip_target(idx, goal_face, vertical_axis, accum_result):
+def compute_pick_target(idx, goal_face, vertical_axis, accum_result):
     """
     /main/plan_pick 콜백에서 호출. accum_result[idx]의 평균값을 사용해 /vision/pick_target으로 보낼 payload 생성.
-
-    idx: 1,2,3 (PickPlan에서 옴)
-    goal_face, vertical_axis: PickPlan에서 옴
-    accum_result: box_detect_node.py의 accum_result 딕셔너리
-                  {box_id: (avg_w, avg_h, avg_z, avg_angle, avg_cx, avg_cy, avg_cz, top_entries)}
-
     반환: dict (GripTarget payload)
     """
-    if idx not in accum_result: 
+    if idx not in accum_result:
         raise ValueError(f"accum_result에 idx {idx}가 없음 (아직 누적 안 됐거나 놓친 박스)")
 
-    avg_w, avg_h, avg_z, avg_angle, avg_cx, avg_cy, avg_cz, _ = accum_result[idx] # 계산해둔 누적 평균값
+    raw_w, raw_h, size_z, avg_angle, avg_cx, avg_cy, avg_cz, _ = accum_result[idx] # 계산해둔 누적 평균값
+
+    # 처음 물체가 들어왔을 때 윗면 기준: 긴 변=size_x, 짧은 변=size_y, 깊이=size_z
+    size_x = max(raw_w, raw_h)
+    size_y = min(raw_w, raw_h)
 
     plan_steps = get_flip_plan(goal_face, vertical_axis)
     need_flip = needs_flip(plan_steps)
     axis_mode = get_align_axis_mode(plan_steps)
     angle1 = convert_angle_axis(avg_angle, axis_mode)
 
-    # 배치 후 바닥에서 위로 올라오는 높이는 top면에 따라 어느 축 치수가 수직이 되는지가 다름.
-    # top면=xy -> z, yz -> x, xz -> y 가 배치 후 수직 축.
-    # z는 현재(뒤집기 전) 이미 바닥 기준 수직 치수(avg_z)로 측정돼 있고,
-    # x/y는 MIDDLE_PLAN에서 yz는 항상 align='long', xz는 항상 align='short'로 고정돼 있으므로
-    # 현재 OBB 치수(avg_w, avg_h) 중 axis_mode에 맞는 쪽(긴 쪽/짧은 쪽)이 곧 그 축의 실측값이 됨.
+    # control 플래이스 위치를 위한 height
     if goal_face == 'xy':
-        height_dim = avg_z
-    elif axis_mode == 'long':
-        height_dim = max(avg_w, avg_h)
-    else:
-        height_dim = min(avg_w, avg_h)
+        height_dim = 0
+    elif goal_face == 'yz':
+        height_dim = size_x
+    else:  # goal_face == 'xz'
+        height_dim = size_y
 
     return {
         'idx': idx,
         'cx': avg_cx, 'cy': avg_cy, 'cz': avg_cz,
-        'height': height_dim / 2 + belt_height,  # 바닥 기준 높이(cm). avg_cz는 카메라 광축 방향 depth로 별개 값.
+        'height': height_dim / 2 + belt_height,  
         'angle1': angle1,
         'need_flip': need_flip,
     }
-
-
-def build_second_pick_plan(idx, rotate_inplace, avg_w, avg_h, avg_z, avg_angle_short, avg_cx, avg_cy, avg_cz):
-    """
-    /flip_done 콜백에서 호출. 뒤집은 후 새로 10프레임 재측정한 평균값으로 /second_pick_plan payload 생성.
-    need_flip=True였던 idx에 대해서만 호출됨.
-
-    idx: PickPlan에서 왔던 그 idx
-    rotate_inplace: /pick_plan 처리 시점에 pick_comm.needs_rotate_inplace(plan_steps)로 저장해둔 값
-    avg_w, avg_h, avg_z, avg_angle_short, avg_cx, avg_cy, avg_cz:
-        /flip_done 이후 새로 쌓은 재측정 프레임들의 평균값 (box_detect_node.py에서 계산해서 넘김,
-        기존 accum_result 계산 방식과 동일한 방식 - fill_ratio 상위 TOP_K_FRAMES 평균)
-
-    반환: dict (SecondPickPlan payload)
-    """
-    angle2 = compute_second_angle(avg_angle_short, rotate_inplace)
-    return {
-        'idx': idx,
-        'cx': avg_cx, 'cy': avg_cy, 'cz': avg_cz,
-        'height2': 0, # 무조건 0
-        'angle2': angle2,
-        'need_flip': 0, # 무조건 0
-    }
-
-
-def serialize_second_pick_plan(payload):
-    """
-    build_second_pick_plan()이 반환한 dict -> '/second_pick_plan' String 메시지(msg.data)로 보낼 문자열.
-    """
-    return (
-        f"{payload['idx']},"
-        f"{payload['cx']:.2f},{payload['cy']:.2f},{payload['cz']:.2f},"
-        f"{payload['height2']:.2f},{payload['angle2']:.2f}"
-    )

@@ -73,12 +73,12 @@ class BoxDetectNode(Node):
         self.box_sizes_pub = self.create_publisher(String, '/vision/box_sizes', 10) 
 
         # pick인 경우
-        self.create_subscription(String, '/main/plan_pick', self.pick_plan_callback, 10) # idx, face, axis, "pick" -> 바로 pick
+        self.create_subscription(String, '/main/plan_pick', self.pick_plan_callback, 10) # idx, face, axis
         self.pick_target_pub = self.create_publisher(String, '/vision/pick_target', 10) # 
         self.create_subscription(Int8, '/control/flip_done', self.flip_done_callback, 10) # idx
-        self.create_subscription(String, '/control/place_done', self.control_done_callback, 10)
+        self.create_subscription(String, '/control/place_done', self.control_done_callback, 10) # idx?
         # keep인 경우
-        self.create_subscription(String, '/main/keep_ready', self.keep_plan_callback, 10) # idx -> keep
+        self.create_subscription(Int8, '/main/keep_ready', self.keep_plan_callback, 10) # idx -> keep
         self.keep_pose_pub = self.create_publisher(String, '/vision/keep_pick_pose', 10) # 추가 -> keep_pose
 
 
@@ -119,18 +119,22 @@ class BoxDetectNode(Node):
         # 원소 형식은 accum_buf 엔트리와 동일: (frame_no, real_w, real_h, z_cm, fill_ratio, angle_deg, cx_cm, cy_cm, cz_cm)
         self.reflip_pending = {}
 
+        # 처리 해상도(W, H)는 그대로 두고 화면에 보여지는 창 크기만 축소
+        cv2.namedWindow("box detect", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("box detect", W // 2, H // 2)
+
     # --------------------------------------------------------------
     # 휴리스틱 -> 비전 (집을 것)
     # --------------------------------------------------------------
-    def pick_plan_callback(self, msg):
-        try:
-            plan = pick_comm.parse_pick_plan(msg.data)
+    def pick_plan_callback(self, msg): 
+        try: 
+            plan = pick_comm.FROM_JSON_main_plan_pick(msg.data) # idx, face, axis, "pick" 
         except ValueError as e:
             self.get_logger().error(f"/plan_pick 파싱 실패: {e}")
             return
 
         try:
-            target_box = pick_comm.build_grip_target( # 딕셔너리로 바꿔줌
+            target_box = pick_comm.compute_pick_target( # 픽 플랜 기반으로 누적값 가져와서 vision_pick_target 발행
                 idx=plan['idx'],
                 goal_face=plan['goal_face'],
                 vertical_axis=plan['vertical_axis'],
@@ -146,7 +150,7 @@ class BoxDetectNode(Node):
             self.rotate_inplace_needed[plan['idx']] = pick_comm.needs_rotate_inplace(plan_steps)
 
         out = String()
-        out.data = pick_comm.serialize_grip_target(target_box)
+        out.data = pick_comm.TO_JSON_vision_pick_target(target_box)
         self.pick_target_pub.publish(out)
         self.get_logger().info(f"/pick_target 발행: {out.data}")
 
@@ -177,11 +181,7 @@ class BoxDetectNode(Node):
     # /main/keep_ready 콜백
     # --------------------------------------------------------------
     def keep_plan_callback(self, msg):
-        try:
-            idx = pick_comm.parse_idx_message(msg.data)
-        except ValueError as e:
-            self.get_logger().error(f"/main/keep_ready 파싱 실패: {e}")
-            return
+        idx = msg.data
 
         if idx not in self.accum_result:
             self.get_logger().error(f"/vision/keep_pick_pose 생성 실패: accum_result에 idx {idx}가 없음"
@@ -191,7 +191,7 @@ class BoxDetectNode(Node):
         _, _, _, avg_angle, avg_cx, avg_cy, avg_cz, _ = self.accum_result[idx]
 
         out = String()
-        out.data = f"{avg_cx:.2f},{avg_cy:.2f},{avg_cz:.2f},{avg_angle:.2f}"
+        out.data = pick_comm.TO_JSON_vision_keep_pick_pose(avg_cx, avg_cy, avg_cz, avg_angle)
         self.keep_pose_pub.publish(out)
         self.get_logger().info(f"/vision/keep_pick_pose 발행: {out.data}")
 
@@ -319,7 +319,6 @@ class BoxDetectNode(Node):
 
         # ---- 누적 버퍼 (id 기준) ----
         # box_ready가 True이고 아직 이번 사이클 결과를 안 보냈을 때만 채움
-        # (한 번 다 채워서 /vision/box_sizes로 보내면, 다음 box_ready rising edge까지 더 안 쌓음).
         if self.box_ready and not self.box_sizes_sent:
             for box_id, det_j in id_to_rank.items():
                 det = frame_dets_by_x[det_j]
@@ -361,7 +360,7 @@ class BoxDetectNode(Node):
                     'need_flip': False,
                 }
                 out = String()
-                out.data = pick_comm.serialize_grip_target(second_target_box)
+                out.data = pick_comm.TO_JSON_vision_pick_target(second_target_box)
                 self.pick_target_pub.publish(out)
                 self.get_logger().info(f"/vision/pick_target 발행(2차, 뒤집기 후): {out.data}")
 
@@ -374,6 +373,7 @@ class BoxDetectNode(Node):
             # 지금 이 사이클이 box_ready로 시작된, 아직 발행 전인 사이클이면 -> 이번에 발행까지 함.
             should_send = self.box_ready and not self.box_sizes_sent
             self.accum_result = {}
+            box_size_entries = []
             for box_id, entries in self.accum_buf.items():
                 if len(entries) == 0:
                     continue
@@ -395,14 +395,16 @@ class BoxDetectNode(Node):
                       f"center(cam)=({avg_cx:.1f}, {avg_cy:.1f}, {avg_cz:.1f}) cm "
                       f"(from frames {[e[0] for e in top_entries]})")
 
-                # ---- box_ready로 시작된 사이클이면 이 박스 크기를 /vision/box_sizes로 발행 ----
+                # ---- box_ready로 시작된 사이클이면 이 박스 크기를 /vision/box_sizes 발행에 포함 ----
                 if should_send:
-                    out = String()
-                    out.data = f"{box_id},{avg_w:.2f},{avg_h:.2f},{avg_z:.2f}"
-                    self.box_sizes_pub.publish(out)
-                    self.get_logger().info(f"/vision/box_sizes 발행: {out.data}")
+                    box_size_entries.append((box_id, avg_w, avg_h, avg_z))
 
-            if should_send:
+            # ---- 박스 전체(최대 3개) 정보를 한 번에 JSON 배열로 발행 ----
+            if should_send and box_size_entries:
+                out = String()
+                out.data = pick_comm.TO_JSON_vision_box_sizes(box_size_entries)
+                self.box_sizes_pub.publish(out)
+                self.get_logger().info(f"/vision/box_sizes 발행: {out.data}")
                 self.box_sizes_sent = True  # 한 번 보냈으니 다음 box_ready rising edge까지 더 안 보냄
 
             # 버퍼 초기화
