@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import json
-import math
 import numpy as np
 import rclpy
 
@@ -47,32 +46,12 @@ class TransformNode(Node):
         super().__init__('transform_node')
 
         # CONTROL -> TRANSFORM
-        self.create_subscription(
-            String,
-            '/raw_pick_pose',
-            self.pick_callback,
-            10
-        )
-
-        self.create_subscription(
-            String,
-            '/raw_keep_pick_pose',
-            self.keep_pick_callback,
-            10
-        )
+        self.create_subscription(String, '/raw_pick_pose', self.pick_callback, 10)
+        self.create_subscription(String, '/raw_keep_pick_pose', self.keep_pick_callback, 10)
 
         # TRANSFORM -> CONTROL
-        self.pick_pub = self.create_publisher(
-            String,
-            '/pick_pose',
-            10
-        )
-
-        self.keep_pick_pub = self.create_publisher(
-            String,
-            '/keep_pick',
-            10
-        )
+        self.pick_pub = self.create_publisher(String, '/pick_pose', 10)
+        self.keep_pick_pub = self.create_publisher(String, '/keep_pick', 10)
 
         self.get_logger().info('TRANSFORM 준비 완료')
 
@@ -102,12 +81,7 @@ class TransformNode(Node):
     # Transform
     # ========================================================
 
-    def transform_and_publish(
-        self,
-        msg,
-        publisher,
-        topic_name
-    ):
+    def transform_and_publish(self, msg, publisher, topic_name):
         try:
             data = json.loads(msg.data)
 
@@ -115,25 +89,17 @@ class TransformNode(Node):
             position_camera = self.read_position(data)
 
             # Camera 기준 yaw
-            yaw_camera = float(data['yaw'])
+            yaw_camera = float(data['angle'])
 
             # 위치 변환
-            position_rotated, position_base = (
-                self.transform_position(position_camera)
-            )
+            position_rotated, position_base = self.transform_position(position_camera)
 
             # yaw 변환
             yaw_base = self.transform_yaw(yaw_camera)
 
         except (
-            json.JSONDecodeError,
-            KeyError,
-            TypeError,
-            ValueError
-        ) as exc:
-            self.get_logger().error(
-                f'{topic_name} 형식 오류: {exc}'
-            )
+            json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            self.get_logger().error(f'{topic_name} 형식 오류: {exc}')
             return
 
         # ====================================================
@@ -167,7 +133,7 @@ class TransformNode(Node):
             'x': float(position_base[0]),
             'y': float(position_base[1]),
             'z': float(position_base[2]),
-            'yaw': yaw_base
+            'angle': yaw_base
         }
 
         output_msg = String()
@@ -183,35 +149,25 @@ class TransformNode(Node):
     def transform_position(position_camera):
 
         # 1. Rotation
-        position_rotated = (
-            R_BASE_CAMERA @ position_camera
-        )
+        position_rotated = R_BASE_CAMERA @ position_camera
 
         # 2. Translation
-        position_base = (
-            position_rotated
-            + CAMERA_TRANSLATION
-        )
+        position_base = position_rotated + CAMERA_TRANSLATION
 
         return position_rotated, position_base
 
     # ========================================================
     # Camera yaw -> Base yaw
+    # Vision: 시계방향 +
+    # Motor : 반시계방향 +
+    # Home  : 180 deg
     # ========================================================
-
-    # ========================================================
-# Camera yaw -> Base yaw
-# Vision: 시계방향 +
-# Motor : 반시계방향 +
-# Home  : 180 deg
-# ========================================================
 
     @staticmethod
     def transform_yaw(yaw_deg):
 
         yaw_base = 180.0 - yaw_deg
 
-        # 0 ~ 360 범위
         return yaw_base % 360.0
 
     # ========================================================
@@ -225,11 +181,6 @@ class TransformNode(Node):
             float(data['y']),
             float(data['z'])
         ], dtype=float)
-
-        if not np.all(np.isfinite(position)):
-            raise ValueError(
-                'position에 유효하지 않은 값이 있습니다.'
-            )
 
         return position
 

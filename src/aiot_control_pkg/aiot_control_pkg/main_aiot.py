@@ -4,7 +4,7 @@ import json
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Int8, Bool, String
 
 
 # ============================================================
@@ -53,7 +53,7 @@ class MainNode(Node):
         # STACKING(pick, keep): Main -> Vision
         self.box_ready_pub = self.create_publisher(Bool, '/main/box_ready', 10) ## 박스 3개 디택해라.
         self.plan_pick_pub = self.create_publisher(String, '/main/plan_pick', 10) ## pick이 왔을 때
-        self.keep_ready_pub = self.create_publisher(String, '/main/keep_ready', 10) ## keep이 왔을 때
+        self.keep_ready_pub = self.create_publisher(Int8, '/main/keep_ready', 10) ## keep이 왔을 때
 
         # STACKING(place): Main -> Heuristic
         self.box_sizes_pub = self.create_publisher(String, '/main/box_sizes', 10) ## 박스 3개 정보 넘기기
@@ -136,6 +136,9 @@ class MainNode(Node):
         self.state = WAIT_BOX_SIZES
 
     def box_sizes_callback(self, msg):
+        if self.state != WAIT_BOX_SIZES:
+            return
+
         try:
             json.loads(msg.data)
 
@@ -145,6 +148,7 @@ class MainNode(Node):
             )
             return
 
+        self.state = WAIT_PLAN_PICK
         self.box_sizes_pub.publish(msg)
         
     def plan_pick_callback(self, msg): ## 휴리스틱이 알려주는 pick 해야하는 인덱스
@@ -154,10 +158,10 @@ class MainNode(Node):
 
         data = json.loads(msg.data)
 
-        index = int(data['index'])
+        index = int(data['idx'])
         face = data['face']
         axis = data['axis']
-        command = str(data['command']).strip().lower()
+        command = str(data['status']).strip().lower()
 
         ## command에 따라 분기 !!
         if command == 'pick':
@@ -165,7 +169,7 @@ class MainNode(Node):
             plan_msg = String()
 
             plan_msg.data = json.dumps({
-                'index': index,
+                'idx': index,
                 'face': face,
                 'axis': axis
             })
@@ -200,8 +204,8 @@ class MainNode(Node):
         if self.pending_keep_index is None:
             return
 
-        msg = String()
-        msg.data = str(self.pending_keep_index)
+        msg = Int8()
+        msg.data = int(self.pending_keep_index)
 
         self.keep_ready_pub.publish(msg)
 
@@ -270,10 +274,15 @@ class MainNode(Node):
         # 이번 사이클 keep 정보 전달
         keep_msg = String()
 
-        keep_msg.data = json.dumps({
-            'keep': self.keep_count > 0,
-            'count': self.keep_count
-        })
+        if self.keep_count > 0:
+            keep_msg.data = json.dumps({
+                'keep': True,
+                'keep_count': self.keep_count
+            })
+        else:
+            keep_msg.data = json.dumps({
+                'keep': False
+            })
 
         self.keep_set_pub.publish(keep_msg)
 

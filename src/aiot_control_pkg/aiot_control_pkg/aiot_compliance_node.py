@@ -143,7 +143,7 @@ class AIOTControlNode(Node):
             'x': float(position[0]),
             'y': float(position[1]),
             'z': float(position[2]),
-            'yaw': yaw
+            'angle': yaw
         })
         self.state = STATE_WAIT_PICK_POSE
         self.raw_pick_pose_pub.publish(raw_msg)
@@ -155,7 +155,7 @@ class AIOTControlNode(Node):
         data = json.loads(msg.data)
         self.pick_position = self.read_position(data)
         self.pick_position[2] = np.clip(self.pick_position[2], 0.035, 0.155)
-        self.pick_yaw = math.radians(float(data['yaw']))
+        self.pick_yaw = math.radians(float(data['angle']))
 
         self.task = 'pick'
         self.state = STATE_WAIT_JOINT_STATE
@@ -167,7 +167,7 @@ class AIOTControlNode(Node):
 
         data = json.loads(msg.data)
         self.place_position = self.read_position(data)
-        self.place_yaw = math.radians(float(data['yaw']))
+        self.place_yaw = math.radians(float(data['angle']))
 
         self.task = 'place'
         self.state = STATE_WAIT_JOINT_STATE
@@ -204,7 +204,7 @@ class AIOTControlNode(Node):
             'x': float(position[0]),
             'y': float(position[1]),
             'z': float(position[2]),
-            'yaw': angle
+            'angle': angle
         })
 
         self.state = STATE_WAIT_KEEP_POSE
@@ -218,7 +218,7 @@ class AIOTControlNode(Node):
 
         self.keep_position = self.read_position(data)
         self.keep_yaw = math.radians(
-            float(data['yaw'])
+            float(data['angle'])
         )
 
         self.task = 'keep_pick'
@@ -355,13 +355,7 @@ class AIOTControlNode(Node):
                 seed[0] = q1
                 seed[2] = math.radians(q3_deg)
 
-                seeds.append(
-                    np.clip(
-                        seed,
-                        JOINT_MIN[:5],
-                        JOINT_MAX[:5]
-                    )
-                )
+                seeds.append(np.clip(seed, JOINT_MIN[:5], JOINT_MAX[:5]))
 
         candidates = []
 
@@ -508,10 +502,7 @@ class AIOTControlNode(Node):
         waypoints = []
         q_prev = self.current_q.copy()
 
-        q_safe = self.solve_parallel_pose(
-            safe_position,
-            q_prev
-        )
+        q_safe = self.solve_parallel_pose(safe_position, q_prev)
 
         waypoints.append(q_safe)
         q_prev = q_safe
@@ -521,15 +512,9 @@ class AIOTControlNode(Node):
 
             position = safe_position.copy()
 
-            position[2] = (
-                FLIP_SAFE_Z
-                + (pre_place_z - FLIP_SAFE_Z) * ratio
-            )
+            position[2] = FLIP_SAFE_Z + (pre_place_z - FLIP_SAFE_Z) * ratio
 
-            q = self.solve_parallel_pose(
-                position,
-                q_prev
-            )
+            q = self.solve_parallel_pose(position, q_prev)
 
             waypoints.append(q)
             q_prev = q
@@ -541,8 +526,7 @@ class AIOTControlNode(Node):
 
     def start_flip2_adaptive(self):
         place_x = (
-            self.pick_position[0]
-            + FLIP_PLACE_X_OFFSET
+            self.pick_position[0] + FLIP_PLACE_X_OFFSET
         )
 
         adaptive_position = np.array([

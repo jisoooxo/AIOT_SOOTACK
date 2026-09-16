@@ -12,3 +12,13 @@ ros2 topic pub --once /control/plan_place std_msgs/msg/String "{data: '{\"x\":0.
 
 5. keep 이어서 비전이 keep 해야하는 박스 좌표를 보내줄 때
 ros2 topic pub --once /vision/keep_pick_pose std_msgs/msg/String "{data: '{\"x\":0.315,\"y\":0.0,\"z\":0.10,\"angle\":0.0}'}"
+
+
+ros2 topic pub --once /main/vision_start std_msgs/msg/Bool "{data: true}"
+
+ros2 topic pub --once /main/box_ready std_msgs/msg/Bool "{data: true}"
+
+ros2 topic pub --once /main/plan_pick std_msgs/String "data: '1,xy,x,pick'"   # align long, need_flip=0
+ros2 topic pub --once /main/plan_pick std_msgs/String "data: '1,xy,y,pick'"   # align short, need_flip=0
+ros2 topic pub --once /main/plan_pick std_msgs/String "data: '2,yz,y,pick'"   # need_flip=1
+ros2 topic pub --once /main/plan_pick std_msgs/String "data: '3,xz,z,pick'"   # need_flip=1
