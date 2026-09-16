@@ -15,8 +15,8 @@ import torch
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 
-# pc = "JISU"
-pc = "JUNMI"
+pc = "JISU"
+# pc = "JUNMI"
 
 # ----------------------------------------------------------------------
 # 카메라/스트림 파라미터
@@ -30,7 +30,7 @@ resize = 2 # 1/2배로 축소시켜서 imshow 띄움
 HW_RESET_ON_START = False    # False로 하면 리셋 안하고 이전 설정 그대로. 리셋하면 노출/화이트밸런스 초기화됨. 
 
 # ---- 실행 모드 ----
-MODE = "bag"  # "real" or "bag"
+MODE = "real"  # "real" or "bag"
 BAG_PATH = "/home/leejunmi/realsense_bag/0909(2).db3"
 
 DEPTH_SENSOR_OPTIONS = {

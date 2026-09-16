@@ -15,18 +15,18 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool, Int8, String
 
-import pick_comm
-import box_capture
-from box_capture import W, H
-# ---- 크기 계산 방식 ----
-# from box_size_plane import compute_box_size
-from box_size_plane2 import compute_box_size2 as compute_box_size
-#from box_size_3zone import compute_box_size
+# import pick_comm
+# import box_capture
+# from box_capture import W, H
+# # ---- 크기 계산 방식 ----
+# # from box_size_plane import compute_box_size
+# from box_size_plane2 import compute_box_size2 as compute_box_size
+# #from box_size_3zone import compute_box_size
 
-# from . import pick_comm
-# from . import box_capture
-# from .box_capture import W, H
-# from .box_size_plane2 import compute_box_size2 as compute_box_size
+from . import pick_comm
+from . import box_capture
+from .box_capture import W, H
+from .box_size_plane2 import compute_box_size2 as compute_box_size
 
 
 # ---- 프레임 누적 파라미터 ----
