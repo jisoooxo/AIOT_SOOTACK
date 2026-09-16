@@ -208,7 +208,7 @@ def compute_pick_target(idx, goal_face, vertical_axis, accum_result):
     plan_steps = get_flip_plan(goal_face, vertical_axis)
     need_flip = needs_flip(plan_steps)
     axis_mode = get_align_axis_mode(plan_steps)
-    angle1 = convert_angle_axis(avg_angle, axis_mode)
+    angle = convert_angle_axis(avg_angle, axis_mode)
 
     # control 플래이스 위치를 위한 height
     if goal_face == 'xy':
@@ -222,6 +222,6 @@ def compute_pick_target(idx, goal_face, vertical_axis, accum_result):
         'idx': idx,
         'cx': avg_cx, 'cy': avg_cy, 'cz': avg_cz,
         'height': height_dim / 2 + belt_height,  
-        'angle': angle1,
+        'angle': angle,
         'need_flip': int(need_flip),
     }

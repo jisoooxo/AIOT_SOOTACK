@@ -76,7 +76,7 @@ class BoxDetectNode(Node):
         self.create_subscription(String, '/main/plan_pick', self.pick_plan_callback, 10) # idx, face, axis
         self.pick_target_pub = self.create_publisher(String, '/vision/pick_target', 10) # 
         self.create_subscription(Int8, '/control/flip_done', self.flip_done_callback, 10) # idx
-        self.create_subscription(String, '/control/place_done', self.control_done_callback, 10) # idx?
+        self.create_subscription(Int8, '/control/place_done', self.control_done_callback, 10) # idx?
         # keep인 경우
         self.create_subscription(Int8, '/main/keep_ready', self.keep_plan_callback, 10) # idx -> keep
         self.keep_pose_pub = self.create_publisher(String, '/vision/keep_pick_pose', 10) # 추가 -> keep_pose
@@ -170,7 +170,7 @@ class BoxDetectNode(Node):
     # --------------------------------------------------------------
     def control_done_callback(self, msg):
         try:
-            idx = pick_comm.parse_idx_message(msg.data)
+            idx = msg.data
         except ValueError as e:
             self.get_logger().error(f"/control_done 파싱 실패: {e}")
             return
@@ -358,7 +358,7 @@ class BoxDetectNode(Node):
                     'idx': box_id,
                     'cx': r_avg_cx, 'cy': r_avg_cy, 'cz': r_avg_cz,
                     'height': 0,
-                    'angle1': angle2,
+                    'angle': angle2,
                     'need_flip': False,
                 }
                 out = String()
