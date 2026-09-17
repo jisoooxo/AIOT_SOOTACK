@@ -43,21 +43,42 @@ MAX_BOXES        = 3          # 안정된 박스가 이 개수가 되면 belt_st
 # ----------------------------------------------------------------------
 def assign_ids_ordered(frame_dets_by_x, tracked_ids):
     """
-    단순 순서 매칭
+    단순 순서 매칭 (개수가 정확히 같을 때) + 노이즈 등으로 더 많이 검출됐을 때는 위치 기반 매칭.
     tracked_ids: {id: {'cx':px, 'cy':px, 'dims':(d1,d2,d3)}} - 이 함수는 이 딕셔너리를 갱신하지 않음.
                  (위치/크기는 seed 시점 값으로 고정 - 노이즈로 흔들리지 않게 하기 위함)
     frame_dets_by_x: 이번 프레임 검출값을 cx 기준 오른쪽부터 정렬한 리스트
 
-    반환: {id: frame_dets_by_x의 인덱스} - 이번 프레임에 매칭된 것만 포함 (개수 불일치면 빈 dict)
+    반환: {id: frame_dets_by_x의 인덱스} - 이번 프레임에 매칭된 것만 포함
+          (검출 개수가 tracked_ids보다 적으면 매칭 안 함 - 빈 dict)
     """
     alive_ids_sorted = sorted(tracked_ids.keys())
-    if len(alive_ids_sorted) == 0 or len(frame_dets_by_x) != len(alive_ids_sorted):
+    n_ids = len(alive_ids_sorted)
+    if n_ids == 0 or len(frame_dets_by_x) < n_ids:
         return {}
-    return {tid: i for i, tid in enumerate(alive_ids_sorted)}
+
+    if len(frame_dets_by_x) == n_ids:
+        return {tid: i for i, tid in enumerate(alive_ids_sorted)}
+
+    # 검출 개수가 더 많은 경우 -> 저장된 위치(cx, cy) 기반, tracked id마다 하나씩 그리디하게 매칭
+    used = set()
+    result = {}
+    for tid in alive_ids_sorted:
+        tcx, tcy = tracked_ids[tid]['cx'], tracked_ids[tid]['cy']
+        best_j, best_dist = None, None
+        for j, det in enumerate(frame_dets_by_x):
+            if j in used:
+                continue
+            dist = (det['cx'] - tcx) ** 2 + (det['cy'] - tcy) ** 2
+            if best_dist is None or dist < best_dist:
+                best_dist, best_j = dist, j
+        if best_j is not None:
+            result[tid] = best_j
+            used.add(best_j)
+    return result
 
 
 def release_id(tracked_ids, box_id):
-    """place_done ->  해당 id를 트래커에서 제거."""
+    """vision 쪽에서 해당 idx에 대한 pick_target 발행이 끝났을 때 -> 트래커에서 제거."""
     tracked_ids.pop(box_id, None)
 
 
@@ -76,7 +97,6 @@ class BoxDetectNode(Node):
         self.create_subscription(String, '/main/plan_pick', self.pick_plan_callback, 10) # idx, face, axis
         self.pick_target_pub = self.create_publisher(String, '/vision/pick_target', 10) # 
         self.create_subscription(Int8, '/control/flip_done', self.flip_done_callback, 10) # idx
-        self.create_subscription(Int8, '/control/place_done', self.control_done_callback, 10) # idx?
         # keep인 경우
         self.create_subscription(Int8, '/main/keep_ready', self.keep_plan_callback, 10) # idx -> keep
         self.keep_pose_pub = self.create_publisher(String, '/vision/keep_pick_pose', 10) # 추가 -> keep_pose
@@ -156,6 +176,13 @@ class BoxDetectNode(Node):
         self.pick_target_pub.publish(out)
         self.get_logger().info(f"/pick_target 발행: {out.data}")
 
+        # id 해제 -> need_flip=False 기준
+        if not target_box['need_flip']:
+            release_id(self.tracked_ids, plan['idx'])
+            self.rotate_inplace_needed.pop(plan['idx'], None)
+            self.reflip_pending.pop(plan['idx'], None)
+            self.get_logger().info(f"idx={plan['idx']} need_flip=0 - id 즉시 해제")
+
     # --------------------------------------------------------------
     # /flip_done 콜백
     # --------------------------------------------------------------
@@ -164,20 +191,6 @@ class BoxDetectNode(Node):
         # 프레임 새로 모으기
         self.reflip_pending[idx] = []
         self.get_logger().info(f"/flip_done idx={idx} - 재측정 시작")
-
-    # --------------------------------------------------------------
-    # /control_done 콜백: 해당 id 해제
-    # --------------------------------------------------------------
-    def control_done_callback(self, msg):
-        try:
-            idx = msg.data
-        except ValueError as e:
-            self.get_logger().error(f"/control_done 파싱 실패: {e}")
-            return
-        release_id(self.tracked_ids, idx)
-        self.rotate_inplace_needed.pop(idx, None)
-        self.reflip_pending.pop(idx, None)
-        self.get_logger().info(f"/control_done idx={idx} - id 해제")
 
     # --------------------------------------------------------------
     # /main/keep_ready 콜백
@@ -367,6 +380,12 @@ class BoxDetectNode(Node):
                 self.get_logger().info(f"/vision/pick_target 발행(2차, 뒤집기 후): {out.data}")
 
                 del self.reflip_pending[box_id]  # 재측정 끝 - 이 idx는 더 이상 reflip 버퍼에 안 쌓음
+
+                # 2차 pick_target 발행이 이 idx에 대한 vision 쪽 마지막 개입이므로
+                # /control/place_done을 기다리지 않고 바로 id 해제.
+                release_id(self.tracked_ids, box_id)
+                self.rotate_inplace_needed.pop(box_id, None)
+                self.get_logger().info(f"idx={box_id} 2차 발행 완료 - id 즉시 해제")
 
         self.global_frame += 1
 

@@ -35,7 +35,7 @@ BOX_CENTER_WIN_PX = 10  # (1차 z)박스 중앙 +-px 윈도우에서 z_center �
 REFINE_WIN_PX = 5      # (1차 z)OBB 3등분점, z_center 재측정 윈도우(px)
 
 # ---- SAM2 경계 스냅 파라미터 (2차에서만 씀) ----
-DILATE_SNAP_PX = 70            # top_mask2의 실제 경계에서부터 이정도 px 안에 들어와야댐, 안되면 노란색으로 뜬다
+DILATE_SNAP_PX = 40            # top_mask2의 실제 경계에서부터 이정도 px 안에 들어와야댐, 안되면 노란색으로 뜬다
 
 # ---- 바닥-윗면 경계(실루엣) 판정 (2차에서만 씀) ----
 EDGE_COMPARE_PX = 3            # 경계 바로 안쪽/바깥쪽 비교 폭(px)
