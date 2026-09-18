@@ -27,7 +27,7 @@ PNEUMATIC_OFF_HOLD = 1.0
 
 FLIP_PLACE_X_OFFSET = 0.03
 FLIP_SAFE_Z = 0.20
-FLIP_DOWN_STEPS = 1
+FLIP_DOWN_STEPS = 6
 FLIP_RETREAT_DISTANCE = 0.02
 FLIP_RETREAT_STEPS = 3
 FLIP_RISE_Z = 0.20
@@ -49,7 +49,8 @@ STATE_WAIT_JOINT_STATE = 'WAIT_JOINT_STATE'
 STATE_WAIT_APPROACH = 'WAIT_APPROACH'
 STATE_WAIT_TARGET = 'WAIT_TARGET'
 STATE_WAIT_HOLD = 'WAIT_HOLD'
-STATE_WAIT_LIFT = 'WAIT_LIFT'
+STATE_WAIT_LIFT_1 = 'WAIT_LIFT_1'
+STATE_WAIT_LIFT_2 = 'WAIT_LIFT_2'
 
 STATE_WAIT_FLIP2_PARALLEL = 'WAIT_FLIP2_PARALLEL'
 STATE_WAIT_FLIP2_DOWN = 'WAIT_FLIP2_DOWN'
@@ -117,7 +118,8 @@ class AIOTControlNode(Node):
         
         self.approach_q = None
         self.target_q = None
-        self.lift_q = None
+        self.lift_q_1 = None
+        self.lift_q_2 = None
 
         self.flip_down_q = None
 
@@ -177,27 +179,15 @@ class AIOTControlNode(Node):
         if self.state != STATE_IDLE:
             return
 
-        try:
-            data = json.loads(msg.data)
+        data = json.loads(msg.data)
 
-            position = np.array([
-                float(data['x']),
-                float(data['y']),
-                float(data['z'])
-            ], dtype=float)
+        position = np.array([
+            float(data['x']),
+            float(data['y']),
+            float(data['z'])
+        ], dtype=float)
 
-            angle = float(data['angle'])
-
-        except (
-            json.JSONDecodeError,
-            KeyError,
-            TypeError,
-            ValueError
-        ) as exc:
-            self.get_logger().error(
-                f'/vision/keep_pick_pose JSON 파싱 실패: {exc}'
-            )
-            return
+        angle = float(data['angle'])
 
         raw_msg = String()
         raw_msg.data = json.dumps({
@@ -263,38 +253,24 @@ class AIOTControlNode(Node):
             return
 
     def vision_pick_target(self, msg):
-        try:
-            data = json.loads(msg.data)
+        data = json.loads(msg.data)
 
-            idx = int(data['idx'])
+        idx = int(data['idx'])
 
-            position = np.array([
-                float(data['x']),
-                float(data['y']),
-                float(data['z'])
-            ], dtype=float)
+        position = np.array([
+            float(data['x']),
+            float(data['y']),
+            float(data['z'])
+        ], dtype=float)
 
-            height = float(data['height'])
-            angle = float(data['angle'])
-            need_flip = bool(int(data['need_flip']))
-
-        except (
-            json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-            self.get_logger().error(
-                f'/vision/pick_target JSON 파싱 실패: {exc}'
-            )
-            return None
+        height = float(data['height'])
+        angle = float(data['angle'])
+        need_flip = bool(int(data['need_flip']))
 
         return (position, angle, idx, height, need_flip)
 
     def start_pick(self):
         pick_yaw = self.pick_yaw
-
-        if self.need_flip:
-            if self.index == 1:
-                pick_yaw += math.radians(90.0)
-            elif self.index == 3:
-                pick_yaw -= math.radians(90.0)
 
         self.publish_pneumatic(False)
         self.start_topdown(self.pick_position, pick_yaw, 'PICK')
@@ -324,21 +300,69 @@ class AIOTControlNode(Node):
 
 
     def start_topdown(self, position, yaw, name):
-        self.approach_q, self.target_q, self.lift_q = self.solve_topdown_path(position, self.current_q, yaw, name)
+        self.approach_q, self.target_q, self.lift_q_1, self.lift_q_2 = self.solve_topdown_path(position, self.current_q, yaw, name)
         self.state = STATE_WAIT_APPROACH
         self.publish_joint_target(self.approach_q)
 
     def solve_topdown_path(self, position, previous_q, yaw, name):
         approach = position.copy()
-        approach[2] += 0.03
+        approach[2] += 0.07
 
         try:
-            q_approach = self.solve_topdown_pose(approach, previous_q, yaw)
-            q_target = self.solve_topdown_pose(position, q_approach, yaw)
-            return q_approach, q_target, q_approach.copy()
-        except RuntimeError:
-            raise RuntimeError(f'{name} 탑다운 경로 생성 실패: position={position.tolist()}')
+            target_yaw = yaw
 
+            # 일반 PLACE: q6 = base - 180도
+            if self.task == 'place':
+                target_yaw = math.radians(180.0)
+
+            # PICK
+            # 기본: vision - base
+            # flip 1: base - vision + 90
+            # flip 2: base - vision     
+            # flip 3: base - vision - 90
+            elif self.task == 'pick' and self.need_flip:
+
+                if self.index == 1:
+                    target_yaw = yaw + math.radians(90.0)
+
+                elif self.index == 2:
+                    target_yaw = yaw
+
+                elif self.index == 3:
+                    target_yaw = yaw - math.radians(90.0)
+
+            target_yaw = wrap_to_pi(target_yaw)
+
+            q_approach = self.solve_topdown_pose(
+                approach,
+                previous_q,
+                target_yaw
+            )
+
+            q_target = self.solve_topdown_pose(
+                position,
+                q_approach,
+                target_yaw
+            )
+
+            q_lift_1 = q_approach.copy()
+
+            q_lift_2 = q_lift_1.copy()
+
+            if (
+                self.task == 'pick'
+                and self.need_flip
+                and self.index in (1, 2, 3)
+            ):
+                q_lift_2[5] = math.radians(0.0)
+
+            return q_approach, q_target, q_lift_1, q_lift_2
+
+        except RuntimeError:
+            raise RuntimeError(
+                f'{name} 탑다운 경로 생성 실패: position={position.tolist()}'
+            )
+    
     def solve_topdown_pose(self, position, previous_q, yaw):
         position = np.asarray(position, dtype=float)
         previous_q = np.asarray(previous_q, dtype=float)
@@ -372,7 +396,7 @@ class AIOTControlNode(Node):
                 position_error = transform[:3, 3] - position
                 axis_error = transform[:3, 2] - target_axis
                 joint_delta = (q[:5] - previous_q[:5] + np.pi) % (2.0 * np.pi) - np.pi
-                return np.concatenate([80.0 * position_error, 0.8 * axis_error, 0.01 * joint_delta])
+                return np.concatenate([90.0 * position_error, 0.8 * axis_error, 0.01 * joint_delta])
 
             result = least_squares(residual, seed, bounds=(JOINT_MIN[:5], JOINT_MAX[:5]), max_nfev=500)
 
@@ -380,12 +404,6 @@ class AIOTControlNode(Node):
             transform = self.kinematics.fk_matrix(q)
             position_error = np.linalg.norm(transform[:3, 3] - position)
             axis_error = np.linalg.norm(transform[:3, 2] - target_axis)
-            self.get_logger().info(
-                f'IK candidate: '
-                f'pos={position_error:.4f}m, '
-                f'axis={axis_error:.4f}, '
-                f'q={np.rad2deg(q).round(1).tolist()}'
-            )
             score = (position_error / 0.005 + axis_error / 0.02)
             candidates.append((score, position_error, axis_error, q))
 
@@ -398,30 +416,42 @@ class AIOTControlNode(Node):
         if axis_error > 0.02:
             raise RuntimeError(f'탑다운 IK 자세 오차 초과: {axis_error:.4f}')
 
-        q[5] = self.target_q6(yaw, q, previous_q[5])
+        q[5] = self.target_q6(yaw, q, previous_q[5], position)
 
         self.get_logger().info(
             f'탑다운 IK: target={position.round(4).tolist()}, '
             f'pos_error={position_error:.4f}m, axis_error={axis_error:.4f}, '
-            f'q={np.rad2deg(q).round(1).tolist()}'
+            f'q={np.rad2deg(q).round(1).tolist()}, '
         )
 
         return q
 
-    def target_q6(self, target_yaw, q, previous_q6):
-        q_zero = q.copy()
-        q_zero[5] = 0.0
+    def target_q6(self, target_yaw, q, previous_q6, position):
 
-        base_yaw = self.kinematics.tool_yaw(q_zero)
-        desired = wrap_to_pi(float(target_yaw) - base_yaw)
+        base_yaw = math.atan2(position[1], position[0])
 
-        candidates = np.array([desired - 2.0 * math.pi, desired, desired + 2.0 * math.pi])
-        valid = candidates[(candidates >= JOINT_MIN[5]) & (candidates <= JOINT_MAX[5])]
+        desired_raw = base_yaw - float(target_yaw)
+
+        desired = wrap_to_pi(desired_raw)
+
+        candidates = np.array([
+            desired - 2.0 * math.pi,
+            desired,
+            desired + 2.0 * math.pi
+        ])
+
+        valid = candidates[
+            (candidates >= JOINT_MIN[5]) & (candidates <= JOINT_MAX[5])
+        ]
 
         if valid.size == 0:
-            return float(np.clip(desired, JOINT_MIN[5], JOINT_MAX[5]))
+            selected = float(np.clip(desired, JOINT_MIN[5], JOINT_MAX[5]))
 
-        return float(valid[np.argmin(np.abs(valid - previous_q6))])
+            return selected
+
+        selected = float(valid[np.argmin(np.abs(valid - previous_q6))])
+
+        return selected
 
 
     def start_flip_place(self):
@@ -431,12 +461,12 @@ class AIOTControlNode(Node):
         q3_offset = self.flip_q3_offset_deg(self.height)
 
         if self.index == 1:
-            self.target_q = np.deg2rad([58.0, -90.0-q2_offset, -90.0-q3_offset, 110.0, 25.0, 0.0])
+            self.target_q = np.deg2rad([58.0, -90.0-q2_offset, -90.0-q3_offset, 110.0, 25.0, 0])
         elif self.index == 2:
             self.start_flip2()
             return
         elif self.index == 3:
-            self.target_q = np.deg2rad([-58.0, -90.0-q2_offset, 90.0+q3_offset, 110.0, 25.0, 0.0])
+            self.target_q = np.deg2rad([-58.0, -90.0-q2_offset, 90.0+q3_offset, 110.0, 25.0, 0])
         else:
             return
 
@@ -467,7 +497,7 @@ class AIOTControlNode(Node):
         q_adaptive = self.target_q.copy()
 
         q_adaptive[1] = math.radians(
-            -90.0 - 8.0  ##### adaptive offset deg #####
+            -90.0 - 10.0  ##### adaptive offset deg #####
         )
         if self.index == 1:
             q_adaptive[2] -= math.radians(2.0)
@@ -479,29 +509,11 @@ class AIOTControlNode(Node):
         self.publish_joint_target(q_adaptive)
 
         self.get_logger().info(
-            f'FLIP {self.index} adaptive place: '
-            f'q2={math.degrees(q_adaptive[1]):.1f}deg'
+            f'FLIP {self.index} adaptive place: q2={math.degrees(q_adaptive[1]):.1f}deg'
         )
 
     def start_flip2(self):
-
         place_x = self.pick_position[0] + FLIP_PLACE_X_OFFSET
-        place_y = self.pick_position[1]
-
-        q1_target = math.atan2(place_y, place_x)
-
-        q_parallel = self.solve_parallel_orientation(
-            self.current_q,
-            q1_target
-        )
-
-        self.state = STATE_WAIT_FLIP2_PARALLEL
-        self.publish_joint_target(q_parallel)
-
-    def start_flip2_down(self):
-        place_x = self.pick_position[0] + FLIP_PLACE_X_OFFSET
-
-        pre_place_z = self.height + 0.01  ##### 1cm 덜 내려가기 -> 이 위치에서 compliace 제어 시작 ~ #####
 
         safe_position = np.array([
             place_x,
@@ -509,22 +521,36 @@ class AIOTControlNode(Node):
             FLIP_SAFE_Z
         ], dtype=float)
 
+        # 현재 LIFT 완료 자세에서 SAFE 위치 + 평행 자세를 동시에 만족하도록 이동
+        q_safe = self.solve_parallel_pose(
+            safe_position, self.current_q
+        )
+
+        q_safe[5] = math.radians(0.0)
+
+        self.state = STATE_WAIT_FLIP2_PARALLEL
+        self.publish_joint_target(q_safe)
+
+    def start_flip2_down(self):
+        place_x = self.pick_position[0] + FLIP_PLACE_X_OFFSET
+
+        pre_place_z = self.height + 0.01
+
         waypoints = []
         q_prev = self.current_q.copy()
-
-        q_safe = self.solve_parallel_pose(safe_position, q_prev)
-
-        waypoints.append(q_safe)
-        q_prev = q_safe
 
         for i in range(1, FLIP_DOWN_STEPS + 1):
             ratio = i / FLIP_DOWN_STEPS
 
-            position = safe_position.copy()
-
-            position[2] = FLIP_SAFE_Z + (pre_place_z - FLIP_SAFE_Z) * ratio
+            position = np.array([
+                place_x,
+                self.pick_position[1],
+                FLIP_SAFE_Z + (pre_place_z - FLIP_SAFE_Z) * ratio
+            ], dtype=float)
 
             q = self.solve_parallel_pose(position, q_prev)
+
+            q[5] = math.radians(0.0)
 
             waypoints.append(q)
             q_prev = q
@@ -533,11 +559,9 @@ class AIOTControlNode(Node):
 
         self.state = STATE_WAIT_FLIP2_DOWN
         self.publish_joint_waypoints(waypoints)
-
+        
     def start_flip2_adaptive(self):
-        place_x = (
-            self.pick_position[0] + FLIP_PLACE_X_OFFSET
-        )
+        place_x = self.pick_position[0] + FLIP_PLACE_X_OFFSET
 
         adaptive_position = np.array([
             place_x,
@@ -545,10 +569,7 @@ class AIOTControlNode(Node):
             self.height - 0.002 ##### compliance 제어를 하면서 내려가는 높이 #####
         ], dtype=float)
 
-        q_adaptive = self.solve_parallel_pose(
-            adaptive_position,
-            self.current_q
-        )
+        q_adaptive = self.solve_parallel_pose(adaptive_position, self.current_q)
 
         q_adaptive[5] = self.current_q[5]
 
@@ -556,11 +577,6 @@ class AIOTControlNode(Node):
 
         self.state = STATE_WAIT_FLIP2_ADAPTIVE
         self.publish_joint_target(q_adaptive)
-
-        self.get_logger().info(
-            f'FLIP 2 adaptive place: '
-            f'z={adaptive_position[2]:.4f}'
-        )
 
     def start_flip2_escape(self):
         place_position = np.array([
@@ -602,85 +618,11 @@ class AIOTControlNode(Node):
         msg.data = enabled
         self.joint6_compliance_pub.publish(msg)
 
-
-    def solve_parallel_orientation(self, previous_q, q1_target):
-        previous_q = np.asarray(previous_q, dtype=float)
-
-        active_indices = np.array([1, 3, 4], dtype=int)
-
-        radial_axis = np.array([
-            math.cos(q1_target),
-            math.sin(q1_target),
-            0.0
-        ])
-
-        previous_axis = self.kinematics.fk_matrix(previous_q)[:3, 2]
-
-        target_axis = (
-            radial_axis
-            if np.dot(previous_axis, radial_axis) >= 0.0
-            else -radial_axis
-        )
-
-        seed = previous_q[active_indices].copy()
-
-        def build_q(active_q):
-            q = previous_q.copy()
-
-            q[0] = q1_target
-            q[2] = previous_q[2]
-            q[active_indices] = active_q
-
-            return q
-
-        def residual(active_q):
-            q = build_q(active_q)
-
-            axis_error = self.kinematics.fk_matrix(q)[:3, 2] - target_axis
-
-            joint_delta = (
-                q[active_indices] - previous_q[active_indices] + np.pi
-            ) % (2.0 * np.pi) - np.pi
-
-            return np.concatenate([
-                20.0 * axis_error,
-                0.02 * joint_delta
-            ])
-
-        result = least_squares(
-            residual,
-            seed,
-            bounds=(JOINT_MIN[active_indices], JOINT_MAX[active_indices]),
-            max_nfev=500
-        )
-
-        q = build_q(result.x)
-
-        parallel_error = np.linalg.norm(self.kinematics.fk_matrix(q)[:3, 2] - target_axis)
-
-        if parallel_error > 0.05:
-            raise RuntimeError(
-                f'평행 자세 오차 초과: {parallel_error:.4f}'
-            )
-
-        self.get_logger().info(
-            f'평행 자세 정렬: '
-            f'q1={math.degrees(q[0]):.1f}deg, '
-            f'q3={math.degrees(q[2]):.1f}deg, '
-            f'parallel_error={parallel_error:.4f}, '
-            f'q={np.rad2deg(q).round(1).tolist()}'
-        )
-
-        return q
-
     def solve_parallel_pose(self, position, previous_q):
         position = np.asarray(position, dtype=float)
         previous_q = np.asarray(previous_q, dtype=float)
 
-        q1_target = math.atan2(
-            position[1],
-            position[0]
-        )
+        q1_target = math.atan2(position[1], position[0])
 
         active_indices = np.array([1, 3, 4], dtype=int)
 
@@ -723,7 +665,7 @@ class AIOTControlNode(Node):
             ) % (2.0 * np.pi) - np.pi
 
             return np.concatenate([
-                80.0 * position_error,
+                60.0 * position_error,
                 10.0 * axis_error,
                 0.05 * joint_delta
             ])
@@ -745,24 +687,16 @@ class AIOTControlNode(Node):
 
         if position_error > 0.005:
             raise RuntimeError(
-                f'평행 IK 위치 오차 초과: '
-                f'{position_error:.4f}m'
+                f'평행 IK 위치 오차 초과: {position_error:.4f}m'
             )
 
         if parallel_error > 0.05:
             raise RuntimeError(
-                f'평행 IK 자세 오차 초과: '
-                f'{parallel_error:.4f}'
+                f'평행 IK 자세 오차 초과: {parallel_error:.4f}'
             )
 
         self.get_logger().info(
-            f'평행 IK: '
-            f'target={position.round(4).tolist()}, '
-            f'q1={math.degrees(q[0]):.1f}deg, '
-            f'q3={math.degrees(q[2]):.1f}deg, '
-            f'pos_error={position_error:.4f}m, '
-            f'parallel_error={parallel_error:.4f}, '
-            f'q={np.rad2deg(q).round(1).tolist()}'
+            f'평행 IK: target={position.round(4).tolist()}'
         )
 
         return q
@@ -795,7 +729,17 @@ class AIOTControlNode(Node):
             self.state = STATE_WAIT_HOLD
             return
 
-        if self.state == STATE_WAIT_LIFT:
+        if self.state == STATE_WAIT_LIFT_1:
+
+            if (
+                self.task == 'pick'
+                and self.need_flip
+                and self.index in (1, 2, 3)
+            ):
+                self.state = STATE_WAIT_LIFT_2
+                self.publish_joint_target(self.lift_q_2)
+                return
+
             if self.task == 'pick':
                 self.finish_pick()
 
@@ -805,6 +749,12 @@ class AIOTControlNode(Node):
 
             elif self.task == 'keep_pick':
                 self.start_keep_place()
+
+            return
+
+        if self.state == STATE_WAIT_LIFT_2:
+            if self.task == 'pick':
+                self.finish_pick()
 
             return
 
@@ -881,8 +831,8 @@ class AIOTControlNode(Node):
 
             return
 
-        self.state = STATE_WAIT_LIFT
-        self.publish_joint_target(self.lift_q)
+        self.state = STATE_WAIT_LIFT_1
+        self.publish_joint_target(self.lift_q_1)
 
     def publish_joint_target(self, q):
         msg = Float64MultiArray()
@@ -936,7 +886,8 @@ class AIOTControlNode(Node):
 
         self.approach_q = None
         self.target_q = None
-        self.lift_q = None
+        self.lift_q_1 = None
+        self.lift_q_2 = None
 
         self.flip_down_q = None
 

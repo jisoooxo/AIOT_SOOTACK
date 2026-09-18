@@ -18,7 +18,8 @@ CAMERA_TRANSLATION = np.array([
     0.0335,  # y
     0.53     # z
 ], dtype=float)
-
+# 카메라 -> 프로파일 끝 13.0
+# 베이스 중간 - 끝  7.0
 
 # ============================================================
 # Camera -> Base Rotation
@@ -130,7 +131,7 @@ class TransformNode(Node):
         # ====================================================
 
         output = {
-            'x': float(position_base[0]),
+            'x': float(position_base[0])+0.01,
             'y': float(position_base[1]),
             'z': float(position_base[2]),
             'angle': yaw_base
@@ -165,10 +166,8 @@ class TransformNode(Node):
 
     @staticmethod
     def transform_yaw(yaw_deg):
-
-        yaw_base = 180.0 - yaw_deg
-
-        return yaw_base % 360.0
+        yaw_base = yaw_deg ## 비전 각도 +
+        return (yaw_base + 180.0) % 360.0 - 180.0
 
     # ========================================================
     # Position 읽기
