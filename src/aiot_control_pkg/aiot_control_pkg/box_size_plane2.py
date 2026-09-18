@@ -12,8 +12,8 @@ TOL은 1차 판정용
 솜 13 6.5 5.4
 초록색 15 5.1 3.5
 
-6.6 15.9 5.3
-9.3 9.2 6.9 ??? 
+6.6 15.9 5.3 # depth가 0.6 차이
+9.3 9.2 6.9 #  
 14.7 4.8 3.7 (z 0.2)
 """
 
@@ -352,8 +352,8 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
         cv2.putText(
             color_img,
             f"{real_w*100:.1f}x{real_h*100:.1f} cm  {angle_deg:.1f} deg",
-            (int(rect_px[0][0]), int(rect_px[0][1]) - 10),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2
+            (int(rect_px[0][0]), int(rect_px[0][1]) - 30),
+            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3
         )
 
     obb_cx_px = float(rect_px[0][0])

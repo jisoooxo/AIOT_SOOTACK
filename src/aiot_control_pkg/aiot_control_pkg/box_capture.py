@@ -15,23 +15,26 @@ import torch
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 
-pc = "JISU"
-# pc = "JUNMI"
+# pc = "JISU"
+pc = "JUNMI"
 
 # ----------------------------------------------------------------------
 # 카메라/스트림 파라미터
 # ----------------------------------------------------------------------
 W, H, FPS = 1280, 720, 30
-ROI_X_MIN, ROI_X_MAX = 250, 1280
-ROI_Y_MIN, ROI_Y_MAX = 250, 650
+# ROI_X_MIN, ROI_X_MAX = 250, 1280
+# ROI_Y_MIN, ROI_Y_MAX = 250, 650
 resize = 2 # 1/2배로 축소시켜서 imshow 띄움
+
+ROI_X_MIN, ROI_X_MAX = 250, 1280
+ROI_Y_MIN, ROI_Y_MAX = 150, 450
 
 # 리얼센스 설정 리셋
 HW_RESET_ON_START = False    # False로 하면 리셋 안하고 이전 설정 그대로. 리셋하면 노출/화이트밸런스 초기화됨. 
 
 # ---- 실행 모드 ----
-MODE = "real"  # "real" or "bag"
-BAG_PATH = "/home/leejunmi/realsense_bag/0909(2).db3"
+MODE = "bag"  # "real" or "bag"
+BAG_PATH = "/home/leejunmi/realsense_bag/0909(1).db3"
 
 DEPTH_SENSOR_OPTIONS = {
     rs.option.enable_auto_exposure: 1,     # 1(켜기)
@@ -122,12 +125,12 @@ class BoxCapture:
             self._apply_options(color_sensor, COLOR_SENSOR_OPTIONS, "color")
 
         elif mode == "bag":
-            config.enable_device_from_file(BAG_PATH, repeat_playback=False)
+            config.enable_device_from_file(BAG_PATH, repeat_playback=True)
             profile = self.pipeline.start(config)
 
             device = profile.get_device()
             playback = device.as_playback()
-            playback.set_real_time(True) 
+            playback.set_real_time(False)  # bag 재생 속도 제한 해제(빠르게 재생)
 
             depth_sensor = device.first_depth_sensor()
 
@@ -179,8 +182,8 @@ class BoxCapture:
         self.roi_mask[self.y0:self.y1, self.x0:self.x1] = True
 
         # 처리 해상도(W, H)는 그대로 두고 화면에 보여지는 창 크기만 축소
-        cv2.namedWindow("rough detect", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("rough detect", W // resize, H // resize) 
+        # cv2.namedWindow("rough detect", cv2.WINDOW_NORMAL)
+        # cv2.resizeWindow("rough detect", W // resize, H // resize) 
 
 
     # --------------------------------------------------------------

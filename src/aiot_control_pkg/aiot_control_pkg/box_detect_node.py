@@ -97,9 +97,11 @@ def make_pick_target_vis(pos, raw_w, raw_h, angle_deg, target_cx, target_cy, tar
     f = (fx + fy) / 2.0
     size_long = max(raw_w, raw_h) * f / target_cz
     size_short = min(raw_w, raw_h) * f / target_cz
+    # box_size_plane2.py의 angle_deg는 atan2(-fdx, fdy)로 정의됨(y축=0도 기준) -> 표준(x축=0도, cos/sin)
+    # 컨벤션에서는 이 값 그대로가 짧은 변 방향, 90도 돌린 (-sin,cos)가 긴 변(fa->fb) 방향이 됨.
     theta = np.radians(angle_deg)
-    d_long = np.array([np.cos(theta), np.sin(theta)])
-    d_short = np.array([-np.sin(theta), np.cos(theta)])
+    d_long = np.array([-np.sin(theta), np.cos(theta)])
+    d_short = np.array([np.cos(theta), np.sin(theta)])
     center = np.array([pos['cx'], pos['cy']], dtype=float)
     corners = np.array([
         center + sl * (size_long / 2) * d_long + ss * (size_short / 2) * d_short
@@ -516,18 +518,18 @@ class BoxDetectNode(Node):
                     f"Box{box_id}: x={avg_w:.1f} y={avg_h:.1f} z={avg_z:.1f} cm angle={avg_angle:.1f} deg "
                     f"center=({avg_cx:.1f},{avg_cy:.1f},{avg_cz:.1f})cm",
                     (10, y_pos),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 1)
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 1)
 
                 # 디버그 줄: 어떤 프레임 데이터를 평균냈는지
-                debug_str = "  " + "  ".join(
-                    [f"[fr{e[0]}:{e[1]:.1f}/{e[2]:.1f}/{e[3]:.1f}/{e[5]:.1f}deg/"
-                     f"({e[6]:.1f},{e[7]:.1f},{e[8]:.1f})]"
-                     for e in top_entries])
-                cv2.putText(
-                    color_img,
-                    debug_str,
-                    (10, y_pos + line_h),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1)
+                # debug_str = "  " + "  ".join(
+                #     [f"[fr{e[0]}:{e[1]:.1f}/{e[2]:.1f}/{e[3]:.1f}/{e[5]:.1f}deg/"
+                #      f"({e[6]:.1f},{e[7]:.1f},{e[8]:.1f})]"
+                #      for e in top_entries])
+                # cv2.putText(
+                #     color_img,
+                #     debug_str,
+                #     (10, y_pos + line_h),
+                #     cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1)
 
         # ---- 화면에 현재 트래킹 중인 id 표시 (디버깅용) ----
         # 위치는 seed 시점 고정값이라, 실제 박스가 살짝 움직였어도 표시 위치는 그대로임(의도된 동작).
@@ -540,8 +542,9 @@ class BoxDetectNode(Node):
         # ---- /vision/pick_target으로 실제 발행된 최종 박스 표시 (마젠타, pick_target 새로 발행될 때마다 갱신) ----
         for vis in self.pick_target_vis.values():
             cv2.polylines(color_img, [vis['corners']], isClosed=True, color=(0, 0, 0), thickness=2)
-            cv2.putText(color_img, vis['label'], vis['label_pos'],
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+            # cv2.putText(color_img, vis['label'], vis['label_pos'],
+            #             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+            cv2.circle(color_img, vis['target_point'], 6, (255, 0, 255), -1)
 
         # ---- STOP 표시 ----
         if self.belt_stop:
