@@ -1,38 +1,3 @@
-"""
-PickPlan (Main -> vision, /main/plan_pick)  - 지금 집을 박스 1개에 대한 계획, JSON
-    {"idx": int, "face": str, "axis": str}
-    예: {"idx": 2, "face": "yz", "axis": "z"}
-    이 토픽은 pick 전용이라 별도 상태/구분 필드 없음 (keep은 /main/keep_ready로 분리돼 있음)
-
-PickTarget (vision -> 제어, /vision/pick_target)  - JSON, 7개 필드
-    {"idx": int, "x": m, "y": m, "z": m, "height": m, "angle": deg, "need_flip": bool}
-    예: {"idx": 2, "x": 0.123, "y": -0.045, "z": 0.382, "height": 0.071, "angle": 15.2, "need_flip": true}
-
-FlipDone (제어 -> vision, /control/flip_done)  - 뒤집기 완료 신호 (need_flip=True였던 idx에 대해서만 옴)
-    std_msgs/Int8, msg.data = idx (문자열 아님, 파싱 불필요)
-    예: 2
-
-PlaceDone (제어 -> vision, /place_done)  - 동작 완료(박스가 프레임 밖으로 집혀 나감) 신호
-    "idx"
-    예: "2"
-
-SecondPickPlan (vision -> 제어, /vision/pick_target)  - /flip_done 받은 후 재측정한 2차 정보.
-    need_flip=True였던 idx에 대해서만 발행됨. PickTarget과 동일한 JSON 스키마.
-
-KeepReady (Main -> vision, /main/keep_ready)  - keep할 박스 idx
-    std_msgs/Int8, msg.data = idx (문자열/JSON 아님, 파싱 불필요)
-    예: 2
-
-KeepPickPose (vision -> 제어, /vision/keep_pick_pose)  - JSON, 4개 필드
-    {"x": m, "y": m, "z": m, "angle": deg}
-    예: {"x": 0.123, "y": -0.045, "z": 0.382, "angle": 15.2}
-
-BoxSizes (vision -> Main, /vision/box_sizes)  - 박스 3개 정보를 한 번에, JSON 배열
-    [{"id": int, "x": m, "y": m, "z": m}, ...]
-    예: [{"id": 1, "x": 0.102, "y": 0.201, "z": 0.053}, {"id": 2, ...}, {"id": 3, ...}]
----------------------------------------------------------------------------
-"""
-
 import json
 
 belt_height = 0 # cm 기준, robot base <-> belt까지 높이

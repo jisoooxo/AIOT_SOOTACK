@@ -82,6 +82,42 @@ def release_id(tracked_ids, box_id):
     tracked_ids.pop(box_id, None)
 
 
+def make_pick_target_vis(pos, raw_w, raw_h, angle_deg, target_cx, target_cy, target_cz,
+                          fx, fy, ppx, ppy, label):
+    """
+    /vision/pick_target 발행 시점의 박스 실측(cm, short-axis 기준 angle_deg) 표시 -> 잘 발행 된건지 표시하는 거.
+    박스 자체는 pos(tracked_ids 픽셀 위치) 기준으로 그리고, 실제 /vision/pick_target으로 나간
+    중앙점(target_cx, target_cy, target_cz, cm 단위, 카메라 좌표계)은 카메라 내부파라미터로 역투영해서
+    별도 점으로 같이 표시함 (박스 표시 위치와 어긋나면 바로 눈에 띔).
+    ppx, ppy: 카메라 주점(principal point, self.capture.cx/cy) - box_size_plane2.py의
+    X=(xs-cx)*z/fx 투영식의 역변환에 필요.
+    """
+    if target_cz <= 0:
+        return None
+    f = (fx + fy) / 2.0
+    size_long = max(raw_w, raw_h) * f / target_cz
+    size_short = min(raw_w, raw_h) * f / target_cz
+    theta = np.radians(angle_deg)
+    d_long = np.array([np.cos(theta), np.sin(theta)])
+    d_short = np.array([-np.sin(theta), np.cos(theta)])
+    center = np.array([pos['cx'], pos['cy']], dtype=float)
+    corners = np.array([
+        center + sl * (size_long / 2) * d_long + ss * (size_short / 2) * d_short
+        for sl, ss in ((1, 1), (1, -1), (-1, -1), (-1, 1))
+    ], dtype=np.int32)
+
+    # 실제 발행되는 중앙점(cm, 카메라 좌표계) -> 픽셀 역투영
+    target_px = int(target_cx * fx / target_cz + ppx)
+    target_py = int(target_cy * fy / target_cz + ppy)
+
+    return {
+        'corners': corners,
+        'target_point': (target_px, target_py),
+        'label': label,
+        'label_pos': (int(center[0] - size_long / 2), int(center[1] - size_short / 2 - 8)),
+    }
+
+
 class BoxDetectNode(Node):
     def __init__(self):
         super().__init__('box_detect')
@@ -90,7 +126,7 @@ class BoxDetectNode(Node):
         self.create_subscription(Bool, '/main/vision_start', self.start_callback, 10) # 이거 오면 벨트스탑 보내기.
         self.start = False  # /main/vision_start 로 True 오기 전엔 검출 로직 안 돌림
         self.belt_stop_pub = self.create_publisher(Bool, '/belt_stop', 10)  # 한번만 발행.
-        self.create_subscription(Bool, '/main/box_ready', self.box_ready_callback, 10) # 이거 오면 누적시작
+        self.create_subscription(Bool, '/main/box_ready', self.box_ready_callback, 10) # 이거 오면 누적시작 -> 무조건 다 reset 해야함
         self.box_sizes_pub = self.create_publisher(String, '/vision/box_sizes', 10) 
 
         # pick인 경우
@@ -123,24 +159,22 @@ class BoxDetectNode(Node):
         self.belt_stop   = False # 컨베이어 정지 상태
         self.belt_stop_sent = False  # vision_start 한 번 켜질 때마다 /belt_stop은 딱 한 번만 발행
 
-        # ---- 영속 ID 트래킹 버퍼 ----
-        # tracked_ids[box_id] = {'cx':px, 'cy':px, 'dims':(d1,d2,d3)} - belt_stop 후 box_ready가 들어오면 오른쪽부터 1,2,3 seed.
-        # 이 위치/크기 값은 seed 이후 절대 갱신되지 않음(노이즈로 흔들리지 않게 고정).
-        # 매칭 자체는 위치/크기를 안 쓰고 assign_ids_ordered()의 순서 매칭으로만 함.
+        # ---- ID 부여 ----
+        # tracked_ids[box_id] = {'cx':px, 'cy':px, 'dims':(d1,d2,d3)} box_ready가 들어오면 오른쪽부터 1,2,3 seed.
         self.tracked_ids = {}
 
-        # ---- 뒤집기(2차 orientation) 관련 상태 ----
+        # ---- pick_target 발행 시각화 상태 ----
+        # pick_target_vis[idx] = make_pick_target_vis
+        self.pick_target_vis = {}
+
+        # ---- 뒤집기(2차 orientation) 관련 ----
         # rotate_inplace_needed[idx] = /plan_pick 처리 시점에 저장해둔 bool.
         # /flip_done 왔을 때 angle2 계산(pick_comm.compute_second_angle)에 재사용 - need_flip=True였던 idx만 값이 있음.
         self.rotate_inplace_needed = {}
         # reflip_pending[idx] = /flip_done 받은 이후 새로 쌓는 재측정 프레임 리스트.
-        # 메인 accum_buf(ACCUM_FRAMES마다 전체 id가 같이 도는 공용 윈도우)와는 별개로,
-        # idx별로 /flip_done 시점부터 독립적으로 REFLIP_FRAMES개를 새로 모음.
-        # 원소 형식은 accum_buf 엔트리와 동일: (frame_no, real_w, real_h, z_cm, fill_ratio, angle_deg, cx_cm, cy_cm, cz_cm)
+        #  (frame_no, real_w, real_h, z_cm, fill_ratio, angle_deg, cx_cm, cy_cm, cz_cm)
         self.reflip_pending = {}
 
-        # 처리 해상도(W, H)는 그대로 두고, 화면 표시용으로만 이미지 자체를 축소해서 보여줌
-        # (cv2.resizeWindow로 창만 줄이면 표시 시점에 저품질 스케일링이 걸려 선/텍스트가 깨져 보임)
         self.display_scale = 0.5
         cv2.namedWindow("box detect", cv2.WINDOW_NORMAL)
         cv2.resizeWindow("box detect", int(W * self.display_scale), int(H * self.display_scale))
@@ -176,6 +210,19 @@ class BoxDetectNode(Node):
         self.pick_target_pub.publish(out)
         self.get_logger().info(f"/pick_target 발행: {out.data}")
 
+        # 화면 표시용 - pick_target 발행할 때마다 그 idx 박스를 새로 표시
+        raw_w, raw_h, _, avg_angle, _, _, avg_cz, _ = self.accum_result[plan['idx']]
+        pos = self.tracked_ids.get(plan['idx'])
+        if pos is not None:
+            label = (f"PICK id{plan['idx']} angle={target_box['angle']:.1f} "
+                     f"h={target_box['height']:.1f}cm flip={int(target_box['need_flip'])}")
+            vis = make_pick_target_vis(pos, raw_w, raw_h, avg_angle,
+                                        target_box['cx'], target_box['cy'], target_box['cz'],
+                                        self.capture.fx, self.capture.fy,
+                                        self.capture.cx, self.capture.cy, label)
+            if vis is not None:
+                self.pick_target_vis[plan['idx']] = vis
+
         # id 해제 -> need_flip=False 기준
         if not target_box['need_flip']:
             release_id(self.tracked_ids, plan['idx'])
@@ -210,6 +257,13 @@ class BoxDetectNode(Node):
         self.keep_pose_pub.publish(out)
         self.get_logger().info(f"/vision/keep_pick_pose 발행: {out.data}")
 
+        # 이 keep_pick_pose 발행이 이 idx에 대한 vision 쪽 마지막 개입이므로 바로 id 해제
+        # (여기서 안 지우면 tracked_ids가 절대 안 비어서 다음 턴 재시딩이 영영 안 됨).
+        release_id(self.tracked_ids, idx)
+        self.rotate_inplace_needed.pop(idx, None)
+        self.reflip_pending.pop(idx, None)
+        self.get_logger().info(f"idx={idx} keep 발행 완료 - id 즉시 해제")
+
     def start_callback(self, msg):
         start = self.start
         self.start = bool(msg.data)
@@ -229,6 +283,8 @@ class BoxDetectNode(Node):
         self.accum_buf = defaultdict(list)
         self.frame_in_window = 0 # 현재 윈도우에서 처리한 프레임 수
         self.box_sizes_sent = False # ready 받으면 리셋, 누적 리셋
+        self.accum_result = {}  # 이전 턴 누적 결과(화면 표시용 포함) 정리
+        self.pick_target_vis = {}  # 이전 턴 pick_target 시각화 정리
         self.get_logger().info("box_ready 신호 받음 - 박스 크기 누적 재시작")
 
     def process_frame(self):
@@ -360,6 +416,8 @@ class BoxDetectNode(Node):
                 # fill_ratio 기준 상위 TOP_K_FRAMES 평균 - 메인 accum_result 계산 방식과 동일
                 sorted_entries = sorted(entries, key=lambda e: e[4], reverse=True)
                 top_entries = sorted_entries[:TOP_K_FRAMES]
+                r_avg_w = float(np.mean([e[1] for e in top_entries]))
+                r_avg_h = float(np.mean([e[2] for e in top_entries]))
                 r_avg_angle = float(np.mean([e[5] for e in top_entries]))
                 r_avg_cx = float(np.mean([e[6] for e in top_entries]))
                 r_avg_cy = float(np.mean([e[7] for e in top_entries]))
@@ -378,6 +436,16 @@ class BoxDetectNode(Node):
                 out.data = pick_comm.TO_JSON_vision_pick_target(second_target_box)
                 self.pick_target_pub.publish(out)
                 self.get_logger().info(f"/vision/pick_target 발행(2차, 뒤집기 후): {out.data}")
+
+                # 화면 표시용 - 2차 pick_target도 발행할 때마다 새로 표시
+                # (박스 표시 각도는 로봇에 보내는 angle2가 아니라, 재측정된 실제 short-axis 각도 r_avg_angle 사용)
+                pos = self.tracked_ids.get(box_id)
+                if pos is not None:
+                    label = f"PICK id{box_id}(2차) angle={angle2:.1f}"
+                    vis = make_pick_target_vis(pos, r_avg_w, r_avg_h, r_avg_angle, r_avg_cz,
+                                                self.capture.fx, self.capture.fy, label)
+                    if vis is not None:
+                        self.pick_target_vis[box_id] = vis
 
                 del self.reflip_pending[box_id]  # 재측정 끝 - 이 idx는 더 이상 reflip 버퍼에 안 쌓음
 
@@ -468,6 +536,12 @@ class BoxDetectNode(Node):
             color = (0, 255, 0) if seen else (0, 0, 255)  # 이번 프레임에 안 보이면 빨간색
             cv2.putText(color_img, f"id{box_id}", (int(pos['cx']) - 15, int(pos['cy']) - 20),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+        # ---- /vision/pick_target으로 실제 발행된 최종 박스 표시 (마젠타, pick_target 새로 발행될 때마다 갱신) ----
+        for vis in self.pick_target_vis.values():
+            cv2.polylines(color_img, [vis['corners']], isClosed=True, color=(0, 0, 0), thickness=2)
+            cv2.putText(color_img, vis['label'], vis['label_pos'],
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
 
         # ---- STOP 표시 ----
         if self.belt_stop:

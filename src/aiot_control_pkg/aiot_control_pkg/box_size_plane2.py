@@ -5,6 +5,19 @@ SAM2 seg_mask + depth_m 받아서 박스 하나의 실측 크기/각도/중심�
 TOL은 1차 판정용
 """
 
+
+"""
+박스 사이즈 
+폼클랜징 16 6.6 4.7
+솜 13 6.5 5.4
+초록색 15 5.1 3.5
+
+6.6 15.9 5.3
+9.3 9.2 6.9 ??? 
+14.7 4.8 3.7 (z 0.2)
+"""
+
+
 import cv2
 import numpy as np
 
@@ -311,7 +324,11 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
         fdx, fdy = -fdx, -fdy
 
     angle_deg = float(np.degrees(np.arctan2(-fdx, fdy)))
-    if orientation_axis == 'short':
+    # fa->fb는 긴 변(=짧은 두 변의 중점을 잇는 선) 방향 벡터라서, 위 raw angle_deg 자체가
+    # 이미 표준(cos,sin) 컨벤션 기준 "짧은 변" 각도와 같음 (실측 시뮬레이션으로 검증됨).
+    # 그래서 orientation_axis='short'일 땐 그대로 두고, 'long'을 원할 때만 90도 돌려줘야 함
+    # (기존엔 반대로 돼 있어서 short/long이 서로 뒤바뀌어 나가던 버그).
+    if orientation_axis == 'long':
         angle_deg = angle_deg + 90.0
         if angle_deg > 90.0:
             angle_deg -= 180.0
