@@ -215,8 +215,8 @@ class PackingSession:
         if self.all_keep:
             task.update(
                 index=-1,
-                face="NONE",
-                alignment="NONE",
+                face="none",
+                alignment="none",
                 status="pack",
             )
             return task
@@ -241,8 +241,8 @@ class PackingSession:
 
         task.update(
             index=box.box_index,
-            face="NONE",
-            alignment="NONE",
+            face="none",
+            alignment="none",
             status="keep",
         )
 

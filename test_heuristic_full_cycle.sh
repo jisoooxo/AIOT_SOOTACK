@@ -18,7 +18,19 @@ source "${WORKSPACE_DIR}/install/setup.bash"
 set -u
 cd "${WORKSPACE_DIR}"
 
-ros2 run aiot_heuristic_pkg heuristic_main_node >"${LOG_FILE}" 2>&1 &
+# 실제 시스템의 ROS 그래프 및 기존 휴리스틱 상태와 테스트를 분리한다.
+export ROS_DOMAIN_ID="${HEURISTIC_TEST_DOMAIN_ID:-77}"
+
+# ros2 run 래퍼가 아니라 실제 console script를 실행해야 종료 시 자식 노드가
+# 남지 않는다.
+HEURISTIC_EXECUTABLE="${WORKSPACE_DIR}/install/aiot_heuristic_pkg/lib/aiot_heuristic_pkg/heuristic_main_node"
+
+if [[ ! -x "${HEURISTIC_EXECUTABLE}" ]]; then
+    echo "[ERROR] 휴리스틱 실행 파일이 없습니다. 패키지를 다시 빌드하세요." >&2
+    exit 1
+fi
+
+"${HEURISTIC_EXECUTABLE}" >"${LOG_FILE}" 2>&1 &
 HEURISTIC_PID=$!
 
 cleanup() {
