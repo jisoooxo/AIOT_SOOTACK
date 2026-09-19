@@ -1,0 +1,71 @@
+[INFO] [1789797354.955121735] [heuristic_main_node]: heuristic ready | render=render_output/20260919_145554_924880
+[INFO] [1789797355.555522619] [heuristic_main_node]: [PACKING] batch=batch_1 placed=3/3 score=(3, 502776.0, (324, 18, 15), -7, -325) visited=910 elapsed=0.590s exact=False stop=grace_timeout
+[INFO] [1789797355.555923548] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 3, "face": "XZ", "axis": "Z", "status": "pick"}
+[INFO] [1789797355.749981857] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797355.750318686] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.198, "y": 0.076, "z": 0.036000000000000004}
+[INFO] [1789797355.752343820] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 2, "face": "XY", "axis": "Y", "status": "pick"}
+[INFO] [1789797355.911740897] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797355.912095786] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.248, "y": 0.07100000000000001, "z": 0.032}
+[INFO] [1789797355.914161629] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 1, "face": "XZ", "axis": "Z", "status": "pick"}
+[INFO] [1789797356.076153777] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797356.076524101] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.20500000000000002, "y": 0.079, "z": 0.07}
+[INFO] [1789797356.077959288] [heuristic_main_node]: 현재 batch 작업 완료
+[INFO] [1789797357.274836687] [heuristic_main_node]: [PACKING] batch=batch_2 placed=3/3 score=(3, 465260.0, (216, 12, 15), -12, -644) visited=1534 elapsed=0.694s exact=False stop=grace_timeout
+[INFO] [1789797357.275206993] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 4, "face": "XZ", "axis": "Z", "status": "pick"}
+[INFO] [1789797357.442140853] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797357.442481447] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.1445, "y": 0.05, "z": 0.05}
+[INFO] [1789797357.444284940] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 5, "face": "YZ", "axis": "Z", "status": "pick"}
+[INFO] [1789797357.622268828] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797357.622612748] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.1615, "y": 0.14300000000000002, "z": 0.12}
+[INFO] [1789797357.623825755] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 6, "face": "XY", "axis": "Y", "status": "pick"}
+[INFO] [1789797357.790023987] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797357.790375138] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.26, "y": 0.0635, "z": 0.055}
+[INFO] [1789797357.791336465] [heuristic_main_node]: 현재 batch 작업 완료
+[INFO] [1789797358.898948592] [heuristic_main_node]: [PACKING] batch=batch_3 placed=3/3 score=(3, 662830.0, (96, 8, 15), -12, -856) visited=1220 elapsed=0.604s exact=False stop=grace_timeout
+[INFO] [1789797358.899313334] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 7, "face": "YZ", "axis": "Y", "status": "pick"}
+[INFO] [1789797359.094936928] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797359.095288226] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.08750000000000001, "y": 0.045, "z": 0.09}
+[INFO] [1789797359.097121234] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 8, "face": "XZ", "axis": "Z", "status": "pick"}
+[INFO] [1789797359.269880671] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797359.270238283] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.0125, "y": 0.0775, "z": 0.038}
+[INFO] [1789797359.271917809] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 9, "face": "XZ", "axis": "Z", "status": "pick"}
+[INFO] [1789797359.453730284] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797359.454087970] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.14400000000000002, "y": 0.0365, "z": 0.07}
+[INFO] [1789797359.454989344] [heuristic_main_node]: 현재 batch 작업 완료
+[INFO] [1789797360.513639954] [heuristic_main_node]: [PACKING] batch=batch_4 placed=3/3 score=(3, 621880.0, (54, 6, 6), -12, -1216) visited=904 elapsed=0.555s exact=False stop=grace_timeout
+[INFO] [1789797360.513988646] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 12, "face": "YZ", "axis": "Z", "status": "pick"}
+[INFO] [1789797360.696667487] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797360.697017116] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.085, "y": 0.135, "z": 0.09}
+[INFO] [1789797360.698942734] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 11, "face": "YZ", "axis": "Y", "status": "pick"}
+[INFO] [1789797360.893057029] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797360.893478955] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.04, "y": 0.0525, "z": 0.066}
+[INFO] [1789797360.894978386] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 10, "face": "YZ", "axis": "Z", "status": "pick"}
+[INFO] [1789797361.080953960] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797361.081339180] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.019, "y": 0.17, "z": 0.10300000000000001}
+[INFO] [1789797361.082363785] [heuristic_main_node]: 현재 batch 작업 완료
+[INFO] [1789797361.608101430] [heuristic_main_node]: [PACKING] batch=batch_5 placed=0/3 score=(0, 0.0, (0, 0, 0), -12, -1216) visited=1 elapsed=0.025s exact=True stop=search_complete
+[INFO] [1789797362.086382207] [heuristic_main_node]: /heuristic/plan_pick: {"idx": -1, "face": "NONE", "axis": "NONE", "status": "pack"}
+[INFO] [1789797362.304405306] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797362.304790361] [heuristic_main_node]: /heuristic/pack_reset_done: true
+[INFO] [1789797363.415868688] [heuristic_main_node]: [PACKING] batch=batch_6 placed=3/3 score=(3, 1138750.0, (204, 12, 15), -13, -478) visited=1456 elapsed=0.609s exact=False stop=grace_timeout
+[INFO] [1789797363.416226274] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 14, "face": "XZ", "axis": "Z", "status": "pick"}
+[INFO] [1789797363.572827582] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797363.573178487] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.17, "y": 0.025500000000000002, "z": 0.05}
+[INFO] [1789797363.574575781] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 13, "face": "XY", "axis": "Y", "status": "pick"}
+[INFO] [1789797363.731457913] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797363.731819009] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.1975, "y": 0.0925, "z": 0.13}
+[INFO] [1789797363.733224461] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 15, "face": "YZ", "axis": "Z", "status": "pick"}
+[INFO] [1789797363.890303799] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797363.890637542] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.22, "y": 0.02, "z": 0.091}
+[INFO] [1789797363.891657037] [heuristic_main_node]: 현재 batch 작업 완료
+[INFO] [1789797365.025176994] [heuristic_main_node]: [PACKING] batch=batch_7 placed=3/3 score=(3, 527625.0, (135, 5, 15), -15, -695) visited=1257 elapsed=0.630s exact=False stop=grace_timeout
+[INFO] [1789797365.025548806] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 16, "face": "XY", "axis": "Y", "status": "pick"}
+[INFO] [1789797365.195487182] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797365.195872625] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.2475, "y": 0.085, "z": 0.15}
+[INFO] [1789797365.197742868] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 18, "face": "XY", "axis": "X", "status": "pick"}
+[INFO] [1789797365.368593073] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797365.368955386] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.1225, "y": 0.0825, "z": 0.091}
+[INFO] [1789797365.370566827] [heuristic_main_node]: /heuristic/plan_pick: {"idx": 17, "face": "XZ", "axis": "X", "status": "pick"}
+[INFO] [1789797365.567519084] [heuristic_main_node]: render: render_output/20260919_145554_924880/packing_current.png
+[INFO] [1789797365.567862682] [heuristic_main_node]: /heuristic/plan_place: {"x": 0.0475, "y": 0.0525, "z": 0.022}
+[INFO] [1789797365.569476187] [heuristic_main_node]: 현재 batch 작업 완료
