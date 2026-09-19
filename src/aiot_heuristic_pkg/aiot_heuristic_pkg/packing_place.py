@@ -18,7 +18,7 @@ GRIPPER_SIDE_MARGIN_MM = BOX_GAP_MM + GRID_UNIT_MM  # 기본 gap보다 격자 �
 GRIPPER_HEIGHT_DIFFERENCE_MM = 30.0  # 옆 윗면이 목표 윗면보다 30mm 이상 높으면 거부
 
 FLOOR_FIRST = False  # 바닥 후보를 먼저 보지만 적층 후보도 DFS에 전달
-RESERVED_SUPPORT = True  # 실제 치수 대신 높이맵 예약 높이를 착지 Z로 사용
+RESERVED_SUPPORT = False  # 탐색은 높이맵을 쓰고, 로봇에 줄 착지 Z는 실제 박스 윗면으로 계산
 
 
 class HeightMapState: # Heightmap!!!!
