@@ -59,7 +59,7 @@ class PackingSession:
         return None
 
     def order_for_execution(self, initial_state, placements, boxes):
-        # 받침이 먼저 놓일 수 있는 순서 중 먼 X -> 작은 Y -> 큰 박스 선택
+        # 받침이 먼저 놓일 수 있는 순서 중 큰 박스 -> 먼 X -> 작은 Y 선택
         if not placements:
             return ()
 
@@ -127,9 +127,9 @@ class PackingSession:
 
                 # publish할 순서
                 priority = (
+                    box.volume_mm3,
                     center_x,
                     -center_y,
-                    box.volume_mm3,
                 )
 
                 next_remaining = (
