@@ -5,6 +5,7 @@
 import os
 import shutil
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -24,6 +25,7 @@ FRAME_RATE = 1
 SAVE_PNG = False
 SAVE_MP4 = False
 SAVE_WEBM = True
+SHOW_GUI = True
 
 MM_TO_M = 0.001
 
@@ -37,12 +39,15 @@ class PackingRenderer:
         save_mp4=SAVE_MP4,
         save_webm=SAVE_WEBM,
         frame_rate=FRAME_RATE,
+        show_gui=SHOW_GUI,
     ):
         self.container = container
         self.save_png = save_png
         self.save_mp4 = save_mp4
         self.save_webm = save_webm
         self.frame_rate = frame_rate
+        self.show_gui = show_gui
+        self.viewer_process = None
 
         # 노드를 켤 때마다 새로운 시간 폴더 생성
         started_at = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -54,6 +59,29 @@ class PackingRenderer:
         self.frame_directory.mkdir(parents=True, exist_ok=True)
 
         self.step = 0
+        self.start_viewer()
+
+    def start_viewer(self):
+        # 별도 process라서 GUI가 ROS worker와 DFS를 막지 않음
+        display_available = os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+
+        if not self.show_gui or not display_available:
+            return
+
+        command = [sys.executable, "-m", "aiot_heuristic_pkg.packing_viewer", str(self.current_path)]
+        self.viewer_process = subprocess.Popen(command)
+
+    def stop_viewer(self):
+        if self.viewer_process is None or self.viewer_process.poll() is not None:
+            return
+
+        self.viewer_process.terminate()
+
+        try:
+            self.viewer_process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            self.viewer_process.kill()
+            self.viewer_process.wait()
 
     def box_style(self, box, highlight_box, completed_boxes):
         # 진한 파랑=완료, 주황=현재 목표, 연한 파랑=아직 놓지 않은 미래 계획
@@ -316,7 +344,9 @@ class PackingRenderer:
         plt.close(figure)
 
         # 실시간 확인용 최신 그림
-        shutil.copyfile(frame_path, self.current_path)
+        current_temp = self.output_directory / ".packing_current.tmp"
+        shutil.copyfile(frame_path, current_temp)
+        os.replace(current_temp, self.current_path)
 
         return str(self.current_path)
 
@@ -337,6 +367,8 @@ class PackingRenderer:
 
     def finish(self):
         # 노드 종료할 때 지금까지의 frame으로 영상 생성
+        self.stop_viewer()
+
         first_frame = self.frame_directory / "step_001.png"
 
         if not first_frame.exists():
