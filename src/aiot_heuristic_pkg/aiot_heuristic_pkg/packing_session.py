@@ -125,10 +125,11 @@ class PackingSession:
                 center_x = placed.x_mm + placed.width_mm / 2
                 center_y = placed.y_mm + placed.depth_mm / 2
 
+                # publish할 순서
                 priority = (
-                    box.volume_mm3,
                     center_x,
                     -center_y,
+                    box.volume_mm3,
                 )
 
                 next_remaining = (
