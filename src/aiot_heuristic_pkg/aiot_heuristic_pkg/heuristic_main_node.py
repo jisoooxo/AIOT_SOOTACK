@@ -8,13 +8,15 @@ import json
 import queue
 import threading
 
-import rclpy
-from rclpy.node import Node
-from std_msgs.msg import Bool, String
-
 from .packing_data_class import BoxSpec, ContainerSpec
 from .packing_render import PackingRenderer
 from .packing_session import PackingSession
+
+# packing_render가 일관된 Matplotlib/NumPy 조합을 먼저 선택한 뒤 ROS를
+# import해야 ~/.local의 NumPy 2와 Ubuntu Matplotlib가 섞이지 않는다.
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Bool, String
 
 
 WORK_QUEUE_SIZE = 16
@@ -36,7 +38,8 @@ class HeuristicMainNode(Node):
         self.pack_reset_done_pub = self.create_publisher(Bool, "/heuristic/pack_reset_done", 10)
 
         # 구독
-        self.create_subscription(String, "/main/box_sizes", self.box_sizes_callback, 10)
+        # self.create_subscription(String, "/main/box_sizes", self.box_sizes_callback, 10)
+        self.create_subscription(String, "/vision/box_sizes", self.box_sizes_callback, 10)
         self.create_subscription(Bool, "/main/next_box", self.next_box_callback, 10)
         self.create_subscription(Bool, "/control/pick_done", self.pick_done_callback, 10)
         self.create_subscription(Bool, "/main/pack_reset", self.pack_reset_callback, 10)
@@ -65,7 +68,7 @@ class HeuristicMainNode(Node):
         try:
             values = json.loads(msg.data)
         except json.JSONDecodeError as error:
-            self.get_logger().error(f"/main/box_sizes JSON 오류: {error}")
+            self.get_logger().error(f"/vision/box_sizes JSON 오류: {error}")
             return
 
         self.put_event("box_sizes", values)
@@ -99,6 +102,17 @@ class HeuristicMainNode(Node):
     def handle_box_sizes(self, values):
         batch_id, boxes = self.parse_boxes(values)
 
+        input_boxes = [
+            {
+                "idx": box.box_index,
+                "size_mm": [box.size_x_mm, box.size_y_mm, box.size_z_mm],
+            }
+            for box in boxes
+        ]
+        self.get_logger().info(
+            f"[INPUT] batch={batch_id} boxes={json.dumps(input_boxes)}"
+        )
+
         if not self.session.start_batch(batch_id, boxes):
             self.get_logger().warning(f"중복 batch 무시: {batch_id}")
             return
@@ -109,9 +123,39 @@ class HeuristicMainNode(Node):
         log = f"[PACKING] batch={batch_id} placed={len(plan.placements)}/{len(boxes)} score={plan.score} visited={plan.visited_nodes}"
         self.get_logger().info(f"{log} elapsed={search.elapsed_seconds:.3f}s exact={search.exact} stop={search.termination_reason}")
 
+        execution_order = [
+            candidate.box_index
+            for candidate in self.session.execution_placements
+        ]
+        keep_indices = [
+            box.box_index
+            for box in self.session.keep_boxes
+        ]
+        self.get_logger().info(
+            f"[PLAN] batch={batch_id} execution_order={execution_order} "
+            f"keep={keep_indices}"
+        )
+
+        for sequence, candidate in enumerate(
+            self.session.execution_placements,
+            start=1,
+        ):
+            placed = candidate.placed_box
+            target_x, target_y, target_z = placed.top_center_mm
+            self.get_logger().info(
+                f"[PLAN_DETAIL] sequence={sequence} idx={candidate.box_index} "
+                f"top_axis={candidate.orientation.top_axis} "
+                f"align_axis={candidate.orientation.container_x_axis} "
+                f"place_top_center_mm=({target_x:.1f}, {target_y:.1f}, {target_z:.1f})"
+            )
+
+        # 상자 크기가 들어와 계획이 완성되는 즉시 전체 계획을 먼저 보여준다.
+        self.render_plan_preview(batch_id, boxes)
+
         # box_sizes보다 next_box가 먼저 도착한 경우
         if self.next_requested:
             self.next_requested = False
+            self.get_logger().info("next box가 box size보다 먼저 나와서 publish 안함")
             self.publish_next_task()
 
     def handle_next_box(self):
@@ -214,6 +258,32 @@ class HeuristicMainNode(Node):
         output_path = self.renderer.render(planned_state, highlight_box, self.session.state.placed_boxes, title)
 
         self.get_logger().info(f"render: {output_path}")
+
+    def render_plan_preview(self, batch_id, boxes):
+        planned_state = self.session.state
+        highlight_box = None
+
+        if self.session.execution_placements:
+            planned_state = self.session.execution_placements[-1].state_after
+            highlight_box = self.session.execution_placements[0].placed_box
+
+        input_indices = [box.box_index for box in boxes]
+        execution_order = [
+            candidate.box_index
+            for candidate in self.session.execution_placements
+        ]
+        keep_indices = [box.box_index for box in self.session.keep_boxes]
+        title = (
+            f"batch={batch_id} input={input_indices} "
+            f"order={execution_order} keep={keep_indices}"
+        )
+        output_path = self.renderer.render(
+            planned_state,
+            highlight_box,
+            self.session.state.placed_boxes,
+            title,
+        )
+        self.get_logger().info(f"render plan: {output_path}")
 
     def worker_loop(self):
         while True:

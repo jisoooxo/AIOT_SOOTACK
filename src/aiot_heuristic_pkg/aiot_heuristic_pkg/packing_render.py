@@ -3,6 +3,7 @@
 """
 
 import os
+import site
 import shutil
 import subprocess
 import sys
@@ -10,6 +11,25 @@ from datetime import datetime
 from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/aiot_heuristic_matplotlib")
+
+# ROS Humble은 Ubuntu의 python3-matplotlib과 함께 설치된다. ~/.local에 pip로
+# 설치한 다른 버전이 있으면 system mpl_toolkits와 섞여 Axes3D import가 깨질 수
+# 있으므로, 이 노드의 렌더러에서는 일관된 system 패키지를 사용한다.
+user_site_directories = site.getusersitepackages()
+
+if isinstance(user_site_directories, str):
+    user_site_directories = (user_site_directories,)
+
+resolved_user_sites = {
+    str(Path(directory).resolve())
+    for directory in user_site_directories
+}
+
+sys.path[:] = [
+    path
+    for path in sys.path
+    if str(Path(path).resolve()) not in resolved_user_sites
+]
 
 import matplotlib
 

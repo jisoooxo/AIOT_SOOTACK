@@ -7,13 +7,14 @@ from collections import deque
 from pathlib import Path
 from time import perf_counter
 
-import rclpy
-from ament_index_python.packages import get_package_share_directory
-from rclpy.node import Node
-
 from .packing_data_class import BoxSpec, ContainerSpec
 from .packing_render import PackingRenderer
 from .packing_session import PackingSession
+
+# 메인 노드와 동일하게 renderer가 Matplotlib/NumPy 조합을 먼저 고른다.
+import rclpy
+from ament_index_python.packages import get_package_share_directory
+from rclpy.node import Node
 
 
 MAX_BATCHES = 100

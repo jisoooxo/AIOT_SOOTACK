@@ -12,9 +12,9 @@ from .packing_search import PackingSearch
 
 
 TOP_FACE = {
-    "X": "YZ",
-    "Y": "XZ",
-    "Z": "XY",
+    "x": "yz",
+    "y": "xz",
+    "z": "xy",
 }
 
 

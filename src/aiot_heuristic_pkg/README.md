@@ -37,7 +37,7 @@ ros2 run aiot_heuristic_pkg heuristic_debug_node
 
 실제 Main/Control 노드와 통신하는 운영용 노드다.
 
-- `/main/box_sizes`로 상자 3개의 크기를 받는다.
+- 현재 임시 연결된 `/vision/box_sizes`로 상자 3개의 크기를 받는다.
 - DFS 기반 패킹 계획과 실제 실행 순서를 계산한다.
 - `/main/next_box`를 받을 때 `/heuristic/plan_pick`을 발행한다.
 - pick 작업에서 `/control/pick_done`을 받으면 `/heuristic/plan_place`를 발행한다.
@@ -50,7 +50,7 @@ ros2 run aiot_heuristic_pkg heuristic_debug_node
 
 | 토픽 | 타입 | 설명 |
 | --- | --- | --- |
-| `/main/box_sizes` | `std_msgs/msg/String` | 상자 3개 JSON 배열, 크기 단위 m |
+| `/vision/box_sizes` | `std_msgs/msg/String` | 상자 3개 JSON 배열, 크기 단위 m. 현재 비전 직결용 임시 설정 |
 | `/main/next_box` | `std_msgs/msg/Bool` | 첫 작업 요청 또는 이전 작업 완료 확정 |
 | `/control/pick_done` | `std_msgs/msg/Bool` | 픽 완료 및 place 좌표 요청 |
 | `/main/pack_reset` | `std_msgs/msg/Bool` | 컨테이너 교체 완료 및 내부 상태 초기화 요청 |
@@ -224,7 +224,7 @@ render_output/<YYYYMMDD_HHMMSS_microseconds>/
 
 ## 주의사항
 
-- `/main/box_sizes`는 현재 정확히 3개짜리 JSON 배열만 허용한다.
+- `/vision/box_sizes`는 현재 정확히 3개짜리 JSON 배열만 허용한다.
 - 새 batch는 이전 batch의 세 작업이 모두 완료된 이후에 보내야 한다.
 - pick 작업은 `/control/pick_done`에서 place 좌표를 발행하지만, 내부 배치 상태 반영은 다음 `/main/next_box`에서 수행된다.
 - GUI는 데스크톱 세션의 `DISPLAY` 또는 `WAYLAND_DISPLAY`가 필요하다.

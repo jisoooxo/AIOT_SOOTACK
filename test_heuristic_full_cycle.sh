@@ -78,7 +78,7 @@ class FullCycleTester(Node):
         self.plan_places = []
         self.reset_done_count = 0
 
-        self.box_sizes_pub = self.create_publisher(String, "/main/box_sizes", 10)
+        self.box_sizes_pub = self.create_publisher(String, "/vision/box_sizes", 10)
         self.next_box_pub = self.create_publisher(Bool, "/main/next_box", 10)
         self.pick_done_pub = self.create_publisher(Bool, "/control/pick_done", 10)
         self.pack_reset_pub = self.create_publisher(Bool, "/main/pack_reset", 10)
