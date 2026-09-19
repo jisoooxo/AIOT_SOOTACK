@@ -92,7 +92,7 @@ class TransformNode(Node):
         )
 
         output = {
-            'x': float(position_base[0])+0.01,
+            'x': float(position_base[0]),
             'y': float(position_base[1]),
             'z': float(position_base[2]),
             'angle': yaw_base

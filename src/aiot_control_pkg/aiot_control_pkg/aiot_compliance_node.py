@@ -37,8 +37,8 @@ HOME_Q = np.zeros(DOF, dtype=float)
 CONTROL_READY = np.deg2rad([0.0, -90.0, 0.0, 113.0, 67.0, 0.0])
 
 KEEP_PLACE_POSITIONS = [
-    np.array([ 0.08, -0.30, 0.16], dtype=float),
-    np.array([-0.08, -0.30, 0.16], dtype=float),
+    np.array([ 0.08, 0.30, 0.16], dtype=float),
+    np.array([-0.08, 0.30, 0.16], dtype=float),
 ]
 
 STATE_IDLE = 'IDLE'
@@ -398,7 +398,7 @@ class AIOTControlNode(Node):
                 position_error = transform[:3, 3] - position
                 axis_error = transform[:3, 2] - target_axis
                 joint_delta = (q[:5] - previous_q[:5] + np.pi) % (2.0 * np.pi) - np.pi
-                return np.concatenate([90.0 * position_error, 0.8 * axis_error, 0.01 * joint_delta])
+                return np.concatenate([100.0 * position_error, 0.6 * axis_error, 0.01 * joint_delta])
 
             result = least_squares(residual, seed, bounds=(JOINT_MIN[:5], JOINT_MAX[:5]), max_nfev=500)
 

@@ -6,7 +6,6 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Int8, Bool, String
 
-
 # ============================================================
 # State
 # ============================================================
@@ -76,7 +75,7 @@ class MainNode(Node):
         self.create_subscription(String, '/heuristic/plan_pick', self.plan_pick_callback, 10) ## 휴리스틱이 주는 잡아야 하는 박스 정보
 
         # Control -> Main
-        self.create_subscription(Bool, '/control/place_done', self.place_done_callback, 10) ## 박스 하나 넣었어 ~
+        self.create_subscription(Int8, '/control/place_done', self.place_done_callback, 10) ## 박스 하나 넣었어 ~
         self.create_subscription(Bool, '/control/keep_done', self.keep_done_callback, 10) ## 박스 하나 킵했어 ~
 
         self.get_logger().info('Main node ready')
@@ -139,14 +138,7 @@ class MainNode(Node):
         if self.state != WAIT_BOX_SIZES:
             return
 
-        try:
-            json.loads(msg.data)
-
-        except json.JSONDecodeError as exc:
-            self.get_logger().error(
-                f'/vision/box_sizes JSON 파싱 실패: {exc}'
-            )
-            return
+        json.loads(msg.data)
 
         self.state = WAIT_PLAN_PICK
         self.box_sizes_pub.publish(msg)
@@ -192,8 +184,8 @@ class MainNode(Node):
 
             self.state = WAIT_RESET
 
-            self.get_logger().warning(
-                'reset 로직은 아직 구현되지 않았습니다.'
+            self.get_logger().info(
+                'reset 로직 구현X.'
             )  ## 상자 바꾸는거랑 찐리셋이랑 구분 일단 안하는 걸로 짤게용
 
         else:
@@ -206,7 +198,6 @@ class MainNode(Node):
 
         msg = Int8()
         msg.data = int(self.pending_keep_index)
-
         self.keep_ready_pub.publish(msg)
 
         self.pending_keep_index = None
@@ -227,9 +218,6 @@ class MainNode(Node):
     def place_done_callback(self, msg):
 
         if self.state != WAIT_PLACE_DONE:
-            return
-
-        if not msg.data:
             return
 
         self.count += 1

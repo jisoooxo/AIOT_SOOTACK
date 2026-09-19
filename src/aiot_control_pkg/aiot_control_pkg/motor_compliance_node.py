@@ -12,7 +12,7 @@ from std_msgs.msg import Bool, Empty, Float64MultiArray
 
 PORT_XH = '/dev/dynamixel_0'
 PORT_XM = '/dev/dynamixel_1'
-ARDUINO_PORT = '/dev/ttyUSB0'
+ARDUINO_PORT = '/dev/ttyUSB2'
 
 XH_IDS = {1, 2, 3, 4}
 ARM_IDS = [1, 2, 3, 4, 5, 6]

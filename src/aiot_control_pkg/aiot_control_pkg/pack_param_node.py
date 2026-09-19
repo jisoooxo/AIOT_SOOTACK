@@ -7,6 +7,7 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
+## 베이스로 부터 떨어진 거리
 tx = 0.0
 ty = 0.0
 tz = 0.0
