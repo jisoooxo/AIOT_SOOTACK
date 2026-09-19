@@ -1,121 +1,130 @@
-[INFO] [1789818983.618418452] [heuristic_main_node]: heuristic ready | render=render_output/20260919_205623_604002
-[INFO] [1789818983.699545381] [heuristic_main_node]: [INPUT] batch=batch_1 boxes=[{"idx": 1, "size_mm": [158.0, 30.0, 30.0]}, {"idx": 2, "size_mm": [142.0, 36.0, 32.0]}, {"idx": 3, "size_mm": [152.0, 36.0, 36.0]}]
-[INFO] [1789818984.301033230] [heuristic_main_node]: [PACKING] batch=batch_1 placed=3/3 score=(3, 502776.0, (234, 13, 15), -4, -325) visited=923 elapsed=0.600s exact=False stop=grace_timeout
-[INFO] [1789818984.301290082] [heuristic_main_node]: [PLAN] batch=batch_1 execution_order=[3, 2, 1] keep=[]
-[INFO] [1789818984.301469868] [heuristic_main_node]: [PLAN_DETAIL] sequence=1 idx=3 top_axis=Y align_axis=Z place_top_center_mm=(198.0, 76.0, 36.0)
-[INFO] [1789818984.301641580] [heuristic_main_node]: [PLAN_DETAIL] sequence=2 idx=2 top_axis=Z align_axis=Y place_top_center_mm=(248.0, 71.0, 32.0)
-[INFO] [1789818984.301807560] [heuristic_main_node]: [PLAN_DETAIL] sequence=3 idx=1 top_axis=Y align_axis=Z place_top_center_mm=(35.0, 79.0, 30.0)
-[INFO] [1789818984.480643450] [heuristic_main_node]: render plan: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818984.481028898] [heuristic_main_node]: /heuristic/plan_pick task=(1/3): {"idx": 3, "face": "xz", "axis": "z", "status": "pick"}
-[INFO] [1789818984.642001384] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818984.642416829] [heuristic_main_node]: /heuristic/plan_place place_count=1, task=1/3: {"x": 0.198, "y": 0.076, "z": 0.036000000000000004}
-[INFO] [1789818984.643846684] [heuristic_main_node]: /heuristic/plan_pick task=(2/3): {"idx": 2, "face": "xy", "axis": "y", "status": "pick"}
-[INFO] [1789818984.811987356] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818984.812379538] [heuristic_main_node]: /heuristic/plan_place place_count=2, task=2/3: {"x": 0.248, "y": 0.07100000000000001, "z": 0.032}
-[INFO] [1789818984.813561301] [heuristic_main_node]: /heuristic/plan_pick task=(3/3): {"idx": 1, "face": "xz", "axis": "z", "status": "pick"}
-[INFO] [1789818984.971665255] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818984.972053643] [heuristic_main_node]: /heuristic/plan_place place_count=3, task=3/3: {"x": 0.035, "y": 0.079, "z": 0.03}
-[INFO] [1789818984.973059800] [heuristic_main_node]: [INPUT] batch=batch_2 boxes=[{"idx": 4, "size_mm": [100.0, 50.0, 49.0]}, {"idx": 5, "size_mm": [120.0, 66.0, 23.0]}, {"idx": 6, "size_mm": [127.0, 20.0, 15.0]}]
-[INFO] [1789818985.568763101] [heuristic_main_node]: [PACKING] batch=batch_2 placed=3/3 score=(3, 465260.0, (126, 7, 15), -12, -592) visited=1208 elapsed=0.594s exact=False stop=grace_timeout
-[INFO] [1789818985.569062326] [heuristic_main_node]: [PLAN] batch=batch_2 execution_order=[4, 5, 6] keep=[]
-[INFO] [1789818985.569269423] [heuristic_main_node]: [PLAN_DETAIL] sequence=1 idx=4 top_axis=Y align_axis=Z place_top_center_mm=(144.5, 50.0, 50.0)
-[INFO] [1789818985.569459513] [heuristic_main_node]: [PLAN_DETAIL] sequence=2 idx=5 top_axis=X align_axis=Z place_top_center_mm=(161.5, 143.0, 120.0)
-[INFO] [1789818985.569640129] [heuristic_main_node]: [PLAN_DETAIL] sequence=3 idx=6 top_axis=Y align_axis=Z place_top_center_mm=(7.5, 63.5, 20.0)
-[INFO] [1789818985.739265914] [heuristic_main_node]: render plan: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818985.739622364] [heuristic_main_node]: /heuristic/plan_pick task=(1/3): {"idx": 4, "face": "xz", "axis": "z", "status": "pick"}
-[INFO] [1789818985.909290737] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818985.909669095] [heuristic_main_node]: /heuristic/plan_place place_count=1, task=1/3: {"x": 0.1445, "y": 0.05, "z": 0.05}
-[INFO] [1789818985.910855192] [heuristic_main_node]: /heuristic/plan_pick task=(2/3): {"idx": 5, "face": "yz", "axis": "z", "status": "pick"}
-[INFO] [1789818986.096586621] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818986.096966242] [heuristic_main_node]: /heuristic/plan_place place_count=2, task=2/3: {"x": 0.1615, "y": 0.14300000000000002, "z": 0.12}
-[INFO] [1789818986.098336409] [heuristic_main_node]: /heuristic/plan_pick task=(3/3): {"idx": 6, "face": "xz", "axis": "z", "status": "pick"}
-[INFO] [1789818986.267559994] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818986.267919187] [heuristic_main_node]: /heuristic/plan_place place_count=3, task=3/3: {"x": 0.0075, "y": 0.0635, "z": 0.02}
-[INFO] [1789818986.269347559] [heuristic_main_node]: [INPUT] batch=batch_3 boxes=[{"idx": 7, "size_mm": [90.0, 55.0, 90.0]}, {"idx": 8, "size_mm": [155.0, 38.0, 25.0]}, {"idx": 9, "size_mm": [73.0, 20.0, 48.0]}]
-[INFO] [1789818986.830655752] [heuristic_main_node]: [PACKING] batch=batch_3 placed=3/3 score=(3, 662830.0, (80, 8, 15), -12, -868) visited=276 elapsed=0.559s exact=False stop=grace_timeout
-[INFO] [1789818986.830909294] [heuristic_main_node]: [PLAN] batch=batch_3 execution_order=[7, 8, 9] keep=[]
-[INFO] [1789818986.831088549] [heuristic_main_node]: [PLAN_DETAIL] sequence=1 idx=7 top_axis=X align_axis=Y place_top_center_mm=(87.5, 45.0, 90.0)
-[INFO] [1789818986.831265390] [heuristic_main_node]: [PLAN_DETAIL] sequence=2 idx=8 top_axis=Y align_axis=Z place_top_center_mm=(32.5, 77.5, 68.0)
-[INFO] [1789818986.831429090] [heuristic_main_node]: [PLAN_DETAIL] sequence=3 idx=9 top_axis=Y align_axis=Z place_top_center_mm=(144.0, 36.5, 70.0)
-[INFO] [1789818987.015008971] [heuristic_main_node]: render plan: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818987.015715074] [heuristic_main_node]: /heuristic/plan_pick task=(1/3): {"idx": 7, "face": "yz", "axis": "y", "status": "pick"}
-[INFO] [1789818987.202005232] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818987.202376909] [heuristic_main_node]: /heuristic/plan_place place_count=1, task=1/3: {"x": 0.08750000000000001, "y": 0.045, "z": 0.09}
-[INFO] [1789818987.203634959] [heuristic_main_node]: /heuristic/plan_pick task=(2/3): {"idx": 8, "face": "xz", "axis": "z", "status": "pick"}
-[INFO] [1789818987.383476319] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818987.383915557] [heuristic_main_node]: /heuristic/plan_place place_count=2, task=2/3: {"x": 0.0325, "y": 0.0775, "z": 0.068}
-[INFO] [1789818987.385119885] [heuristic_main_node]: /heuristic/plan_pick task=(3/3): {"idx": 9, "face": "xz", "axis": "z", "status": "pick"}
-[INFO] [1789818987.597753985] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818987.598151165] [heuristic_main_node]: /heuristic/plan_place place_count=3, task=3/3: {"x": 0.14400000000000002, "y": 0.0365, "z": 0.07}
-[INFO] [1789818987.599183207] [heuristic_main_node]: [INPUT] batch=batch_4 boxes=[{"idx": 10, "size_mm": [103.0, 20.0, 38.0]}, {"idx": 11, "size_mm": [66.0, 20.0, 105.0]}, {"idx": 12, "size_mm": [90.0, 50.0, 90.0]}]
-[INFO] [1789818989.604941204] [heuristic_main_node]: [PACKING] batch=batch_4 placed=2/3 score=(2, 216880.0, (80, 8, 15), -12, -1047) visited=288 elapsed=2.005s exact=False stop=hard_timeout
-[INFO] [1789818989.605298248] [heuristic_main_node]: [PLAN] batch=batch_4 execution_order=[11, 10] keep=[12]
-[INFO] [1789818989.605501213] [heuristic_main_node]: [PLAN_DETAIL] sequence=1 idx=11 top_axis=Z align_axis=X place_top_center_mm=(233.0, 170.0, 105.0)
-[INFO] [1789818989.605675899] [heuristic_main_node]: [PLAN_DETAIL] sequence=2 idx=10 top_axis=Z align_axis=Y place_top_center_mm=(250.0, 51.5, 70.0)
-[INFO] [1789818989.789188620] [heuristic_main_node]: render plan: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818989.789581373] [heuristic_main_node]: /heuristic/plan_pick task=(1/3): {"idx": 11, "face": "xy", "axis": "x", "status": "pick"}
-[INFO] [1789818989.971563286] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818989.971951757] [heuristic_main_node]: /heuristic/plan_place place_count=1, task=1/3: {"x": 0.233, "y": 0.17, "z": 0.105}
-[INFO] [1789818989.973771908] [heuristic_main_node]: /heuristic/plan_pick task=(2/3): {"idx": 10, "face": "xy", "axis": "y", "status": "pick"}
-[INFO] [1789818990.153998970] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818990.154385260] [heuristic_main_node]: /heuristic/plan_place place_count=2, task=2/3: {"x": 0.25, "y": 0.051500000000000004, "z": 0.07}
-[INFO] [1789818990.155889366] [heuristic_main_node]: /heuristic/plan_pick task=(3/3): {"idx": 12, "face": "NONE", "axis": "NONE", "status": "keep"}
-[INFO] [1789818990.354577565] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818990.354899079] [heuristic_main_node]: [INPUT] batch=batch_5 boxes=[{"idx": 13, "size_mm": [65.0, 55.0, 130.0]}, {"idx": 14, "size_mm": [51.0, 50.0, 200.0]}, {"idx": 15, "size_mm": [41.0, 40.0, 100.0]}]
-[INFO] [1789818990.853891041] [heuristic_main_node]: [PACKING] batch=batch_5 placed=1/3 score=(1, 464750.0, (0, 0, 0), -13, -1139) visited=52 elapsed=0.498s exact=True stop=search_complete
-[INFO] [1789818990.854186978] [heuristic_main_node]: [PLAN] batch=batch_5 execution_order=[13] keep=[14, 15]
-[INFO] [1789818990.854376581] [heuristic_main_node]: [PLAN_DETAIL] sequence=1 idx=13 top_axis=Z align_axis=Y place_top_center_mm=(117.5, 142.5, 130.0)
-[INFO] [1789818991.039262135] [heuristic_main_node]: render plan: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818991.039642805] [heuristic_main_node]: /heuristic/plan_pick task=(1/3): {"idx": 13, "face": "xy", "axis": "y", "status": "pick"}
-[INFO] [1789818991.230441324] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818991.230822409] [heuristic_main_node]: /heuristic/plan_place place_count=1, task=1/3: {"x": 0.11750000000000001, "y": 0.14250000000000002, "z": 0.13}
-[INFO] [1789818991.232167313] [heuristic_main_node]: /heuristic/plan_pick task=(2/3): {"idx": 14, "face": "NONE", "axis": "NONE", "status": "keep"}
-[INFO] [1789818991.413574975] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818991.414009725] [heuristic_main_node]: /heuristic/plan_pick task=(3/3): {"idx": 15, "face": "NONE", "axis": "NONE", "status": "keep"}
-[INFO] [1789818991.595043101] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818991.595365375] [heuristic_main_node]: [INPUT] batch=batch_6 boxes=[{"idx": 16, "size_mm": [50.0, 35.0, 150.0]}, {"idx": 17, "size_mm": [35.0, 22.0, 105.0]}, {"idx": 18, "size_mm": [45.0, 45.0, 91.0]}]
-[INFO] [1789818992.212516982] [heuristic_main_node]: [PACKING] batch=batch_6 placed=1/3 score=(1, 80850.0, (0, 0, 0), -13, -1172) visited=52 elapsed=0.617s exact=True stop=search_complete
-[INFO] [1789818992.212832137] [heuristic_main_node]: [PLAN] batch=batch_6 execution_order=[17] keep=[16, 18]
-[INFO] [1789818992.213032486] [heuristic_main_node]: [PLAN_DETAIL] sequence=1 idx=17 top_axis=Z align_axis=Y place_top_center_mm=(71.0, 157.5, 105.0)
-[INFO] [1789818992.402923105] [heuristic_main_node]: render plan: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818992.403312011] [heuristic_main_node]: /heuristic/plan_pick task=(1/3): {"idx": 17, "face": "xy", "axis": "y", "status": "pick"}
-[INFO] [1789818992.591281076] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818992.591652661] [heuristic_main_node]: /heuristic/plan_place place_count=1, task=1/3: {"x": 0.07100000000000001, "y": 0.1575, "z": 0.105}
-[INFO] [1789818992.592940932] [heuristic_main_node]: /heuristic/plan_pick task=(2/3): {"idx": 16, "face": "NONE", "axis": "NONE", "status": "keep"}
-[INFO] [1789818992.772823928] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-[INFO] [1789818992.773246478] [heuristic_main_node]: /heuristic/plan_pick task=(3/3): {"idx": 18, "face": "NONE", "axis": "NONE", "status": "keep"}
-[INFO] [1789818992.953625133] [heuristic_main_node]: render: render_output/20260919_205623_604002/packing_current.png
-Failed to publish log message to rosout: publisher's context is invalid, at ./src/rcl/publisher.c:389
-[INFO] [1789818994.820131713] [heuristic_main_node]: render video: {'webm': 'render_output/20260919_205623_604002/packing_plan.webm'}
+getifaddrs: Operation not permitted
+getifaddrs: Operation not permitted
+getifaddrs: Operation not permitted
+[37;1m2026-09-19 23:54:54.827 [31;1m[[37;1mTRANSPORT_UDP[31;1m Error] [37mError creating socket: Operation not permitted[34;1m -> Function [36minit[m
+[37;1m2026-09-19 23:54:54.827 [31;1m[[37;1mRTPS_PARTICIPANT[31;1m Error] [37mUser transport failed to register.[34;1m -> Function [36mRTPSParticipantImpl[m
+[INFO] [1789829694.859596538] [heuristic_main_node]: heuristic ready | render=render_output/20260919_235454_846517
+[INFO] [1789829694.899379570] [heuristic_main_node]: [INPUT] batch=batch_1 boxes=[{"idx": 1, "size_mm": [158.0, 30.0, 30.0]}, {"idx": 2, "size_mm": [142.0, 36.0, 32.0]}, {"idx": 3, "size_mm": [152.0, 36.0, 36.0]}]
+Traceback (most recent call last):
+  File "/usr/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/usr/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/home/joo/AIOT_SOOTACK/install/aiot_heuristic_pkg/lib/python3.10/site-packages/aiot_heuristic_pkg/packing_viewer.py", line 76, in <module>
+    main()
+  File "/home/joo/AIOT_SOOTACK/install/aiot_heuristic_pkg/lib/python3.10/site-packages/aiot_heuristic_pkg/packing_viewer.py", line 71, in main
+    viewer = PackingViewer(values[0])
+  File "/home/joo/AIOT_SOOTACK/install/aiot_heuristic_pkg/lib/python3.10/site-packages/aiot_heuristic_pkg/packing_viewer.py", line 21, in __init__
+    self.root = tk.Tk()
+  File "/usr/lib/python3.10/tkinter/__init__.py", line 2299, in __init__
+    self.tk = _tkinter.create(screenName, baseName, className, interactive, wantobjects, useTk, sync, use)
+_tkinter.TclError: couldn't connect to display ":0"
+[INFO] [1789829695.515726727] [heuristic_main_node]: [PACKING] batch=batch_1 placed=3/3 score=(3, 502776.0, (-4, -16, -12), -4, -201) visited=1021 elapsed=0.614s exact=False stop=grace_timeout
+[INFO] [1789829695.516295857] [heuristic_main_node]: [PLAN] batch=batch_1 execution_order=[3, 2, 1] keep=[]
+[INFO] [1789829695.516777314] [heuristic_main_node]: [PLAN_DETAIL] sequence=1 idx=3 top_axis=Y align_axis=Z place_top_center_mm=(248.0, 76.0, 36.0)
+[INFO] [1789829695.517229916] [heuristic_main_node]: [PLAN_DETAIL] sequence=2 idx=2 top_axis=Y align_axis=Z place_top_center_mm=(206.0, 71.0, 36.0)
+[INFO] [1789829695.517677654] [heuristic_main_node]: [PLAN_DETAIL] sequence=3 idx=1 top_axis=Y align_axis=Z place_top_center_mm=(165.0, 79.0, 30.0)
+[INFO] [1789829695.700130694] [heuristic_main_node]: render plan: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829695.700478551] [heuristic_main_node]: /heuristic/plan_pick task=(1/3): {"idx": 3, "face": "xz", "axis": "z", "status": "pick"}
+[INFO] [1789829695.859524126] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829695.859900321] [heuristic_main_node]: /heuristic/plan_place place_count=1, task=1/3: {"x": 0.248, "y": 0.076, "z": 0.036000000000000004}
+[INFO] [1789829695.861899500] [heuristic_main_node]: /heuristic/plan_pick task=(2/3): {"idx": 2, "face": "xz", "axis": "z", "status": "pick"}
+[INFO] [1789829696.021784417] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829696.022165027] [heuristic_main_node]: /heuristic/plan_place place_count=2, task=2/3: {"x": 0.20600000000000002, "y": 0.07100000000000001, "z": 0.036000000000000004}
+[INFO] [1789829696.024339340] [heuristic_main_node]: /heuristic/plan_pick task=(3/3): {"idx": 1, "face": "xz", "axis": "z", "status": "pick"}
+[INFO] [1789829696.204816160] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829696.205185074] [heuristic_main_node]: /heuristic/plan_place place_count=3, task=3/3: {"x": 0.165, "y": 0.079, "z": 0.03}
+[INFO] [1789829696.206581969] [heuristic_main_node]: [INPUT] batch=batch_2 boxes=[{"idx": 4, "size_mm": [100.0, 50.0, 49.0]}, {"idx": 5, "size_mm": [120.0, 66.0, 23.0]}, {"idx": 6, "size_mm": [127.0, 20.0, 15.0]}]
+[INFO] [1789829696.830467352] [heuristic_main_node]: [PACKING] batch=batch_2 placed=3/3 score=(3, 465260.0, (162, 9, 15), -12, -530) visited=1402 elapsed=0.623s exact=False stop=grace_timeout
+[INFO] [1789829696.830729612] [heuristic_main_node]: [PLAN] batch=batch_2 execution_order=[6, 4, 5] keep=[]
+[INFO] [1789829696.830908639] [heuristic_main_node]: [PLAN_DETAIL] sequence=1 idx=6 top_axis=Y align_axis=Z place_top_center_mm=(257.5, 63.5, 56.0)
+[INFO] [1789829696.831075206] [heuristic_main_node]: [PLAN_DETAIL] sequence=2 idx=4 top_axis=Y align_axis=Z place_top_center_mm=(114.5, 50.0, 50.0)
+[INFO] [1789829696.831237809] [heuristic_main_node]: [PLAN_DETAIL] sequence=3 idx=5 top_axis=X align_axis=Z place_top_center_mm=(131.5, 143.0, 120.0)
+[INFO] [1789829696.997827445] [heuristic_main_node]: render plan: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829696.998205525] [heuristic_main_node]: /heuristic/plan_pick task=(1/3): {"idx": 6, "face": "xz", "axis": "z", "status": "pick"}
+[INFO] [1789829697.166081341] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829697.166439753] [heuristic_main_node]: /heuristic/plan_place place_count=1, task=1/3: {"x": 0.2575, "y": 0.0635, "z": 0.056}
+[INFO] [1789829697.167738517] [heuristic_main_node]: /heuristic/plan_pick task=(2/3): {"idx": 4, "face": "xz", "axis": "z", "status": "pick"}
+[INFO] [1789829697.336719531] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829697.337101309] [heuristic_main_node]: /heuristic/plan_place place_count=2, task=2/3: {"x": 0.1145, "y": 0.05, "z": 0.05}
+[INFO] [1789829697.338750261] [heuristic_main_node]: /heuristic/plan_pick task=(3/3): {"idx": 5, "face": "yz", "axis": "z", "status": "pick"}
+[INFO] [1789829697.537386012] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829697.537748549] [heuristic_main_node]: /heuristic/plan_place place_count=3, task=3/3: {"x": 0.1315, "y": 0.14300000000000002, "z": 0.12}
+[INFO] [1789829697.539174774] [heuristic_main_node]: [INPUT] batch=batch_3 boxes=[{"idx": 7, "size_mm": [90.0, 55.0, 90.0]}, {"idx": 8, "size_mm": [155.0, 38.0, 25.0]}, {"idx": 9, "size_mm": [73.0, 20.0, 48.0]}]
+[INFO] [1789829699.546343892] [heuristic_main_node]: [PACKING] batch=batch_3 placed=2/3 score=(2, 515580.0, (96, 8, 15), -12, -666) visited=445 elapsed=2.006s exact=False stop=hard_timeout
+[INFO] [1789829699.546597146] [heuristic_main_node]: [PLAN] batch=batch_3 execution_order=[9, 7] keep=[8]
+[INFO] [1789829699.546770537] [heuristic_main_node]: [PLAN_DETAIL] sequence=1 idx=9 top_axis=Y align_axis=Z place_top_center_mm=(114.0, 36.5, 70.0)
+[INFO] [1789829699.546932642] [heuristic_main_node]: [PLAN_DETAIL] sequence=2 idx=7 top_axis=X align_axis=Y place_top_center_mm=(57.5, 45.0, 90.0)
+[INFO] [1789829699.720000243] [heuristic_main_node]: render plan: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829699.720369868] [heuristic_main_node]: /heuristic/plan_pick task=(1/3): {"idx": 9, "face": "xz", "axis": "z", "status": "pick"}
+[INFO] [1789829699.892540536] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829699.892923643] [heuristic_main_node]: /heuristic/plan_place place_count=1, task=1/3: {"x": 0.114, "y": 0.0365, "z": 0.07}
+[INFO] [1789829699.894231043] [heuristic_main_node]: /heuristic/plan_pick task=(2/3): {"idx": 7, "face": "yz", "axis": "y", "status": "pick"}
+[INFO] [1789829700.069062801] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829700.069458817] [heuristic_main_node]: /heuristic/plan_place place_count=2, task=2/3: {"x": 0.0575, "y": 0.045, "z": 0.09}
+[INFO] [1789829700.071017958] [heuristic_main_node]: /heuristic/plan_pick task=(3/3): {"idx": 8, "face": "none", "axis": "none", "status": "keep"}
+[INFO] [1789829700.237850644] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829700.238210056] [heuristic_main_node]: [INPUT] batch=batch_4 boxes=[{"idx": 10, "size_mm": [103.0, 20.0, 38.0]}, {"idx": 11, "size_mm": [66.0, 20.0, 105.0]}, {"idx": 12, "size_mm": [90.0, 50.0, 90.0]}]
+[INFO] [1789829700.810935102] [heuristic_main_node]: [PACKING] batch=batch_4 placed=3/3 score=(3, 621880.0, (90, 6, 11), -12, -1029) visited=900 elapsed=0.570s exact=False stop=grace_timeout
+[INFO] [1789829700.811199129] [heuristic_main_node]: [PLAN] batch=batch_4 execution_order=[10, 12, 11] keep=[]
+[INFO] [1789829700.811387503] [heuristic_main_node]: [PLAN_DETAIL] sequence=1 idx=10 top_axis=X align_axis=Z place_top_center_mm=(249.0, 170.0, 103.0)
+[INFO] [1789829700.811561480] [heuristic_main_node]: [PLAN_DETAIL] sequence=2 idx=12 top_axis=X align_axis=Z place_top_center_mm=(55.0, 135.0, 90.0)
+[INFO] [1789829700.811727169] [heuristic_main_node]: [PLAN_DETAIL] sequence=3 idx=11 top_axis=X align_axis=Y place_top_center_mm=(10.0, 52.5, 66.0)
+[INFO] [1789829700.993261611] [heuristic_main_node]: render plan: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829700.993617007] [heuristic_main_node]: /heuristic/plan_pick task=(1/3): {"idx": 10, "face": "yz", "axis": "z", "status": "pick"}
+[INFO] [1789829701.175496919] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829701.175868418] [heuristic_main_node]: /heuristic/plan_place place_count=1, task=1/3: {"x": 0.249, "y": 0.17, "z": 0.10300000000000001}
+[INFO] [1789829701.177862214] [heuristic_main_node]: /heuristic/plan_pick task=(2/3): {"idx": 12, "face": "yz", "axis": "z", "status": "pick"}
+[INFO] [1789829701.375215772] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829701.375589120] [heuristic_main_node]: /heuristic/plan_place place_count=2, task=2/3: {"x": 0.055, "y": 0.135, "z": 0.09}
+[INFO] [1789829701.377134800] [heuristic_main_node]: /heuristic/plan_pick task=(3/3): {"idx": 11, "face": "yz", "axis": "y", "status": "pick"}
+[INFO] [1789829701.555165097] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829701.555532322] [heuristic_main_node]: /heuristic/plan_place place_count=3, task=3/3: {"x": 0.01, "y": 0.0525, "z": 0.066}
+[INFO] [1789829701.557075130] [heuristic_main_node]: [INPUT] batch=batch_5 boxes=[{"idx": 13, "size_mm": [65.0, 55.0, 130.0]}, {"idx": 14, "size_mm": [51.0, 50.0, 200.0]}, {"idx": 15, "size_mm": [41.0, 40.0, 100.0]}]
+[INFO] [1789829701.574092158] [heuristic_main_node]: [PACKING] batch=batch_5 placed=0/3 score=(0, 0.0, (0, 0, 0), -12, -1029) visited=1 elapsed=0.017s exact=True stop=search_complete
+[INFO] [1789829701.574316466] [heuristic_main_node]: [PLAN] batch=batch_5 execution_order=[] keep=[13, 14, 15]
+[INFO] [1789829701.746906246] [heuristic_main_node]: render plan: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829701.747270566] [heuristic_main_node]: /heuristic/plan_pick task=(0/3): {"idx": -1, "face": "none", "axis": "none", "status": "pack"}
+[INFO] [1789829701.922958488] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829701.923352455] [heuristic_main_node]: /heuristic/pack_reset_done: true
+[INFO] [1789829702.425466611] [heuristic_main_node]: [INPUT] batch=batch_6 boxes=[{"idx": 13, "size_mm": [65.0, 55.0, 130.0]}, {"idx": 14, "size_mm": [51.0, 50.0, 200.0]}, {"idx": 15, "size_mm": [41.0, 40.0, 100.0]}]
+[INFO] [1789829703.058724147] [heuristic_main_node]: [PACKING] batch=batch_6 placed=3/3 score=(3, 1138750.0, (-13, -13, -20), -13, -357) visited=1496 elapsed=0.632s exact=False stop=grace_timeout
+[INFO] [1789829703.058980052] [heuristic_main_node]: [PLAN] batch=batch_6 execution_order=[14, 13, 15] keep=[]
+[INFO] [1789829703.059157725] [heuristic_main_node]: [PLAN_DETAIL] sequence=1 idx=14 top_axis=Y align_axis=Z place_top_center_mm=(170.0, 25.5, 50.0)
+[INFO] [1789829703.059327998] [heuristic_main_node]: [PLAN_DETAIL] sequence=2 idx=13 top_axis=Z align_axis=Y place_top_center_mm=(237.5, 92.5, 130.0)
+[INFO] [1789829703.059491276] [heuristic_main_node]: [PLAN_DETAIL] sequence=3 idx=15 top_axis=Y align_axis=Z place_top_center_mm=(140.0, 80.5, 40.0)
+[INFO] [1789829703.217979494] [heuristic_main_node]: render plan: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829703.218339485] [heuristic_main_node]: /heuristic/plan_pick task=(1/3): {"idx": 14, "face": "xz", "axis": "z", "status": "pick"}
+[INFO] [1789829703.393589394] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829703.393941124] [heuristic_main_node]: /heuristic/plan_place place_count=1, task=1/3: {"x": 0.17, "y": 0.025500000000000002, "z": 0.05}
+[INFO] [1789829703.395213043] [heuristic_main_node]: /heuristic/plan_pick task=(2/3): {"idx": 13, "face": "xy", "axis": "y", "status": "pick"}
+[INFO] [1789829703.553786258] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829703.554140267] [heuristic_main_node]: /heuristic/plan_place place_count=2, task=2/3: {"x": 0.23750000000000002, "y": 0.0925, "z": 0.13}
+[INFO] [1789829703.555952372] [heuristic_main_node]: /heuristic/plan_pick task=(3/3): {"idx": 15, "face": "xz", "axis": "z", "status": "pick"}
+[INFO] [1789829703.714019644] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829703.714385640] [heuristic_main_node]: /heuristic/plan_place place_count=3, task=3/3: {"x": 0.14, "y": 0.0805, "z": 0.04}
+[INFO] [1789829703.715831306] [heuristic_main_node]: [INPUT] batch=batch_7 boxes=[{"idx": 16, "size_mm": [50.0, 35.0, 150.0]}, {"idx": 17, "size_mm": [35.0, 22.0, 105.0]}, {"idx": 18, "size_mm": [45.0, 45.0, 91.0]}]
+[INFO] [1789829704.328367776] [heuristic_main_node]: [PACKING] batch=batch_7 placed=3/3 score=(3, 527625.0, (126, 7, 15), -15, -570) visited=1281 elapsed=0.611s exact=False stop=grace_timeout
+[INFO] [1789829704.328631269] [heuristic_main_node]: [PLAN] batch=batch_7 execution_order=[16, 17, 18] keep=[]
+[INFO] [1789829704.328803933] [heuristic_main_node]: [PLAN_DETAIL] sequence=1 idx=16 top_axis=Z align_axis=Y place_top_center_mm=(247.5, 155.0, 150.0)
+[INFO] [1789829704.328969362] [heuristic_main_node]: [PLAN_DETAIL] sequence=2 idx=17 top_axis=Z align_axis=Y place_top_center_mm=(191.0, 127.5, 105.0)
+[INFO] [1789829704.329126913] [heuristic_main_node]: [PLAN_DETAIL] sequence=3 idx=18 top_axis=Z align_axis=X place_top_center_mm=(152.5, 132.5, 91.0)
+[INFO] [1789829704.497005646] [heuristic_main_node]: render plan: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829704.497359749] [heuristic_main_node]: /heuristic/plan_pick task=(1/3): {"idx": 16, "face": "xy", "axis": "y", "status": "pick"}
+[INFO] [1789829704.663842541] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829704.664204594] [heuristic_main_node]: /heuristic/plan_place place_count=1, task=1/3: {"x": 0.2475, "y": 0.155, "z": 0.15}
+[INFO] [1789829704.666353539] [heuristic_main_node]: /heuristic/plan_pick task=(2/3): {"idx": 17, "face": "xy", "axis": "y", "status": "pick"}
+[INFO] [1789829704.832926498] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829704.833295832] [heuristic_main_node]: /heuristic/plan_place place_count=2, task=2/3: {"x": 0.191, "y": 0.1275, "z": 0.105}
+[INFO] [1789829704.835139592] [heuristic_main_node]: /heuristic/plan_pick task=(3/3): {"idx": 18, "face": "xy", "axis": "x", "status": "pick"}
+[INFO] [1789829705.028179356] [heuristic_main_node]: render: render_output/20260919_235454_846517/packing_current.png
+[INFO] [1789829705.028549354] [heuristic_main_node]: /heuristic/plan_place place_count=3, task=3/3: {"x": 0.1525, "y": 0.1325, "z": 0.091}
+[INFO] [1789829707.136834634] [heuristic_main_node]: render video: {'webm': 'render_output/20260919_235454_846517/packing_plan.webm'}
 Failed to publish log message to rosout: publisher's context is invalid, at ./src/rcl/publisher.c:389
 Traceback (most recent call last):
   File "/home/joo/AIOT_SOOTACK/install/aiot_heuristic_pkg/lib/aiot_heuristic_pkg/heuristic_main_node", line 33, in <module>
     sys.exit(load_entry_point('aiot-heuristic-pkg==0.0.0', 'console_scripts', 'heuristic_main_node')())
   File "/home/joo/AIOT_SOOTACK/install/aiot_heuristic_pkg/lib/python3.10/site-packages/aiot_heuristic_pkg/heuristic_main_node.py", line 393, in main
-    rclpy.spin(node)
-  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 229, in spin
-    executor.spin_once()
-  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 808, in spin_once
-    self._spin_once_impl(timeout_sec)
-  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 797, in _spin_once_impl
-    handler, entity, node = self.wait_for_ready_callbacks(timeout_sec=timeout_sec)
-  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 780, in wait_for_ready_callbacks
-    return next(self._cb_iter)
-  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 681, in _wait_for_ready_callbacks
-    raise ExternalShutdownException()
-rclpy.executors.ExternalShutdownException
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  [INFO] [1789819138.597594604] [heuristic_main_node]: [INPUT] batch=batch_8 boxes=[{"idx": 1, "size_mm": [69.0, 64.0, 63.0]}, {"idx": 2, "size_mm": [63.0, 100.0, 42.0]}, {"idx": 3, "size_mm": [55.0, 78.0, 50.0]}]
-[INFO] [1789819138.628048803] [heuristic_main_node]: [PACKING] batch=batch_8 placed=0/3 score=(0, 0.0, (0, 0, 0), -14, -1282) visited=1 elapsed=0.030s exact=True stop=search_complete
-[INFO] [1789819138.628347971] [heuristic_main_node]: [PLAN] batch=batch_8 execution_order=[] keep=[1, 2, 3]
-[INFO] [1789819138.809787460] [heuristic_main_node]: render plan: render_output/20260919_194022_365826/packing_current.png
-[INFO] [1789819138.810157928] [heuristic_main_node]: /heuristic/plan_pick task=(0/3): {"idx": -1, "face": "NONE", "axis": "NONE", "status": "pack"}
-[INFO] [1789819138.991395412] [heuristic_main_node]: render: render_output/20260919_194022_365826/packing_current.png
-[INFO] [1789819226.664833765] [heuristic_main_node]: render video: {'webm': 'render_output/20260919_194022_365826/packing_plan.webm'}
-Failed to publish log message to rosout: publisher's context is invalid, at ./src/rcl/publisher.c:389
-Traceback (most recent call last):
-  File "/home/joo/AIOT_SOOTACK/install/aiot_heuristic_pkg/lib/aiot_heuristic_pkg/heuristic_main_node", line 33, in <module>
-    sys.exit(load_entry_point('aiot-heuristic-pkg==0.0.0', 'console_scripts', 'heuristic_main_node')())
-  File "/home/joo/AIOT_SOOTACK/build/aiot_heuristic_pkg/aiot_heuristic_pkg/heuristic_main_node.py", line 393, in main
     rclpy.spin(node)
   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 229, in spin
     executor.spin_once()

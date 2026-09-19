@@ -181,13 +181,34 @@ class PackingSearch:
                     max_height = height
 
         roughness = final_state.roughness()
+        layout_key = continuity
+
+        # 빈 컨테이너의 첫 lookahead만:
+        # 낮게 배치 → Y 방향 한 줄 → X 방향으로 촘촘하게
+        if len(initial_state.placed_boxes) == 0 and placements:
+            min_x = min(candidate.x_cells for candidate in placements)
+            max_x = max(
+                candidate.x_cells + candidate.orientation.width_cells
+                for candidate in placements
+            )
+            min_y = min(candidate.y_cells for candidate in placements)
+            max_y = max(
+                candidate.y_cells + candidate.orientation.depth_cells
+                for candidate in placements
+            )
+
+            layout_key = (
+                -max_height,
+                -(max_y - min_y),
+                -(max_x - min_x),
+            )
 
         # 왼쪽부터 비교
-        # 개수 -> 부피 -> 연속 공간 -> 낮은 최대 높이 -> 낮은 거칠기
+        # 개수 -> 부피 -> 배치 형태(첫 배치는 낮고 촘촘하게) -> 높이 -> 거칠기
         return (
             placed_count,
             volume_mm3,
-            continuity,
+            layout_key,
             -max_height,
             -roughness,
         )
@@ -280,32 +301,12 @@ class PackingSearch:
             if checked % 32 == 0:
                 stop_if_needed()
 
-        remaining_width = 0
-
-        for remaining_box in next_boxes:
-            remaining_width += self.engine.minimum_width(remaining_box)
-
         def candidate_key(candidate):
             floor_key = candidate.z_cells != 0
             height_key = candidate.orientation.height_cells
             baf = self.baf_key(state, candidate)
 
-            if first_lookahead:
-                reserved_width = candidate.orientation.width_cells + remaining_width
-
-                if reserved_width <= state.width_cells:
-                    target_x = state.width_cells - reserved_width
-                else:
-                    target_x = state.width_cells - candidate.orientation.width_cells
-
-                return (
-                    floor_key,
-                    abs(candidate.x_cells - target_x),
-                    candidate.y_cells,
-                    height_key,
-                    baf,
-                )
-
+            # 바닥 → 먼 X → 작은 Y → 낮은 자세
             return (
                 floor_key,
                 -candidate.x_cells,
