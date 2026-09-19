@@ -77,6 +77,7 @@ class FullCycleTester(Node):
         self.plan_picks = []
         self.plan_places = []
         self.reset_done_count = 0
+        self.next_box_count = 0
 
         self.box_sizes_pub = self.create_publisher(String, "/vision/box_sizes", 10)
         self.next_box_pub = self.create_publisher(Bool, "/main/next_box", 10)
@@ -126,22 +127,21 @@ class FullCycleTester(Node):
     def run_batch(self, batch_number, boxes):
         while True:
             print(f"\n[BATCH {batch_number}/6] input={[box['idx'] for box in boxes]}", flush=True)
+            previous_pick_count = len(self.plan_picks)
             message = String()
             message.data = json.dumps(boxes, separators=(",", ":"))
             self.box_sizes_pub.publish(message)
-            self.spin_for(0.5)
+
+            # 새 규약: box_sizes 계산이 끝나면 첫 작업은 자동으로 발행된다.
+            self.wait_until(
+                lambda: len(self.plan_picks) > previous_pick_count,
+                f"batch {batch_number} first plan_pick",
+            )
 
             completed = 0
             retry_after_reset = False
 
             while completed < 3:
-                previous_pick_count = len(self.plan_picks)
-                self.publish_bool(self.next_box_pub)
-                self.wait_until(
-                    lambda: len(self.plan_picks) > previous_pick_count,
-                    f"batch {batch_number} plan_pick",
-                )
-
                 task = self.plan_picks[-1]
                 status = str(task["status"]).lower()
                 print(f"  plan_pick #{completed + 1}: {task}", flush=True)
@@ -170,13 +170,22 @@ class FullCycleTester(Node):
 
                 completed += 1
 
+                # 첫 번째와 두 번째 작업 완료 후에만 다음 작업을 요청한다.
+                # 세 번째 작업은 다음 batch의 box_sizes가 들어올 때 완료 처리된다.
+                if completed < 3:
+                    previous_pick_count = len(self.plan_picks)
+                    self.publish_bool(self.next_box_pub)
+                    self.next_box_count += 1
+                    self.wait_until(
+                        lambda: len(self.plan_picks) > previous_pick_count,
+                        f"batch {batch_number} next plan_pick",
+                    )
+
             if retry_after_reset:
                 self.spin_for(0.5)
                 continue
 
-            # 마지막 작업을 canonical state에 반영하고 batch를 닫는다.
-            self.publish_bool(self.next_box_pub)
-            self.spin_for(0.5)
+            # 새 규약에서는 세 번째 작업 뒤에 next_box를 보내지 않는다.
             return
 
 
@@ -191,9 +200,17 @@ def main():
         for offset in range(0, len(BOXES), 3):
             node.run_batch(offset // 3 + 1, BOXES[offset:offset + 3])
 
+        expected_next_box_count = (len(BOXES) // 3) * 2
+        if node.next_box_count != expected_next_box_count:
+            raise RuntimeError(
+                f"next_box 횟수 불일치: actual={node.next_box_count}, "
+                f"expected={expected_next_box_count}"
+            )
+
         print(
             f"\n[PASS] 입력 18개 완료 | plan_pick={len(node.plan_picks)} "
-            f"| plan_place={len(node.plan_places)} | reset={node.reset_done_count}",
+            f"| plan_place={len(node.plan_places)} "
+            f"| next_box={node.next_box_count} | reset={node.reset_done_count}",
             flush=True,
         )
     except Exception as error:

@@ -228,8 +228,8 @@ class PackingSession:
 
             task.update(
                 index=candidate.box_index,
-                face=TOP_FACE[orientation.top_axis],
-                alignment=orientation.container_x_axis,
+                face=TOP_FACE[orientation.top_axis.lower()],
+                alignment=orientation.container_x_axis.lower(),
                 status="pick",
                 target_mm=placed.top_center_mm,
             )

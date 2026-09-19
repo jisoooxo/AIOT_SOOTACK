@@ -37,6 +37,7 @@ class HeuristicMainNode(Node):
         self.plan_place_pub = self.create_publisher(String, "/heuristic/plan_place", 10)
         self.pack_reset_done_pub = self.create_publisher(Bool, "/heuristic/pack_reset_done", 10)
 
+
         # 구독
         # self.create_subscription(String, "/main/box_sizes", self.box_sizes_callback, 10)
         self.create_subscription(String, "/vision/box_sizes", self.box_sizes_callback, 10)
@@ -50,8 +51,12 @@ class HeuristicMainNode(Node):
         self.place_sent = False
         self.next_requested = False
         self.shutdown_started = False
+        self.lookahead_count = 3
+        self.task_sent_count = 0
+        self.plan_place_sent_count = 0
+        self.batch_active = False
 
-        # canonical state를 수정하는 worker는 하나만 사용
+        # state를 수정하는 worker는 하나만 사용
         self.worker = threading.Thread(target=self.worker_loop, daemon=False)
         self.worker.start()
 
@@ -97,9 +102,43 @@ class HeuristicMainNode(Node):
             boxes.append(box)
 
         self.batch_count += 1
-        return f"batch_{self.batch_count}", tuple(boxes)
+        return f"batch_{self.batch_count}", tuple(boxes) # 배치 카운트 1개, 박스 정보 3개 다
 
     def handle_box_sizes(self, values):
+        if self.batch_active and self.current_task is not None:
+            if self.current_task["sequence"] != self.lookahead_count:
+                self.get_logger().warning(
+                    "이전 batch가 끝나기 전에 새 box_sizes가 들어옴"
+                )
+                return
+
+            if (
+                self.current_task["status"] == "pick"
+                and not self.place_sent
+            ):
+                self.get_logger().warning(
+                    "마지막 plan_place 발행 전 새 box_sizes 거부"
+                )
+                return
+
+            if self.current_task["status"] == "pack":
+                self.get_logger().warning(
+                    "pack_reset 전에 새 box_sizes 거부"
+                )
+                return
+
+            if not self.session.confirm_done(
+                self.current_task["task_id"]
+            ):
+                self.get_logger().warning(
+                    "이전 batch 마지막 작업 완료 반영 실패"
+                )
+                return
+
+            self.current_task = None
+            self.place_sent = False
+            self.batch_active = False
+
         batch_id, boxes = self.parse_boxes(values)
 
         input_boxes = [
@@ -108,7 +147,7 @@ class HeuristicMainNode(Node):
                 "size_mm": [box.size_x_mm, box.size_y_mm, box.size_z_mm],
             }
             for box in boxes
-        ]
+        ] # box index랑 size다 받음.
         self.get_logger().info(
             f"[INPUT] batch={batch_id} boxes={json.dumps(input_boxes)}"
         )
@@ -116,6 +155,11 @@ class HeuristicMainNode(Node):
         if not self.session.start_batch(batch_id, boxes):
             self.get_logger().warning(f"중복 batch 무시: {batch_id}")
             return
+
+        self.lookahead_count = len(boxes)
+        self.task_sent_count = 0
+        self.plan_place_sent_count = 0
+        self.batch_active = True
 
         plan = self.session.last_plan
         search = self.session.last_search
@@ -152,11 +196,8 @@ class HeuristicMainNode(Node):
         # 상자 크기가 들어와 계획이 완성되는 즉시 전체 계획을 먼저 보여준다.
         self.render_plan_preview(batch_id, boxes)
 
-        # box_sizes보다 next_box가 먼저 도착한 경우
-        if self.next_requested:
-            self.next_requested = False
-            self.get_logger().info("next box가 box size보다 먼저 나와서 publish 안함")
-            self.publish_next_task()
+        self.next_requested = False
+        self.publish_next_task()
 
     def handle_next_box(self):
         # 아직 box_sizes가 없으면 요청만 기억
@@ -196,11 +237,17 @@ class HeuristicMainNode(Node):
         message = String()
         message.data = json.dumps(payload)
         self.plan_pick_pub.publish(message)
+        if task["status"] in ("pick", "keep"):
+            self.task_sent_count += 1
 
         self.current_task = task
         self.place_sent = False
 
-        self.get_logger().info(f"/heuristic/plan_pick: {message.data}")
+        self.get_logger().info(
+            f"/heuristic/plan_pick "
+            f"task=({self.task_sent_count}/{self.lookahead_count}): "
+            f"{message.data}"
+        )
         self.render_task(task)
 
     def handle_pick_done(self):
@@ -222,15 +269,24 @@ class HeuristicMainNode(Node):
         message = String()
         message.data = json.dumps(payload)
         self.plan_place_pub.publish(message)
-
+        self.plan_place_sent_count += 1
         self.place_sent = True
-        self.get_logger().info(f"/heuristic/plan_place: {message.data}")
+
+        self.get_logger().info(
+            f"/heuristic/plan_place "
+            f"place_count={self.plan_place_sent_count}, "
+            f"task={self.current_task['sequence']}/{self.lookahead_count}: "
+            f"{message.data}"
+        )
 
     def handle_pack_reset(self):
         self.session.reset_pack()
         self.current_task = None
         self.place_sent = False
         self.next_requested = False
+        self.task_sent_count = 0
+        self.plan_place_sent_count = 0
+        self.batch_active = False
 
         message = Bool()
         message.data = True
