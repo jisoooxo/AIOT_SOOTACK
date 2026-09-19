@@ -7,32 +7,11 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
-
-# ============================================================
-# Camera -> Base Translation
-# 카메라 원점의 Base 좌표
-# ============================================================
-
 CAMERA_TRANSLATION = np.array([
     0.346,   # x
     0.0335,  # y
     0.53     # z
 ], dtype=float)
-# 카메라 -> 프로파일 끝 13.0
-# 베이스 중간 - 끝  7.0
-
-# ============================================================
-# Camera -> Base Rotation
-#
-# Camera 좌표계를 Base 좌표계 방향으로 변환
-#
-# 현재 관계:
-#   Camera x -> -Base y
-#   Camera y -> -Base x
-#   Camera z -> -Base z
-#
-# p_base = R_BASE_CAMERA @ p_camera + CAMERA_TRANSLATION
-# ============================================================
 
 R_BASE_CAMERA = np.array([
     [ 0.0, -1.0,  0.0],
@@ -83,29 +62,19 @@ class TransformNode(Node):
     # ========================================================
 
     def transform_and_publish(self, msg, publisher, topic_name):
-        try:
-            data = json.loads(msg.data)
+        data = json.loads(msg.data)
 
-            # Camera 기준 좌표
-            position_camera = self.read_position(data)
+        # Camera 기준 좌표
+        position_camera = self.read_position(data)
 
-            # Camera 기준 yaw
-            yaw_camera = float(data['angle'])
+        # Camera 기준 yaw
+        yaw_camera = float(data['angle'])
 
-            # 위치 변환
-            position_rotated, position_base = self.transform_position(position_camera)
+        # 위치 변환
+        position_rotated, position_base = self.transform_position(position_camera)
 
-            # yaw 변환
-            yaw_base = self.transform_yaw(yaw_camera)
-
-        except (
-            json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-            self.get_logger().error(f'{topic_name} 형식 오류: {exc}')
-            return
-
-        # ====================================================
-        # 변환 결과 출력
-        # ====================================================
+        # yaw 변환
+        yaw_base = self.transform_yaw(yaw_camera)
 
         self.get_logger().info(
             f'\n'
@@ -114,10 +83,6 @@ class TransformNode(Node):
             f'[{position_camera[0]:.4f}, '
             f'{position_camera[1]:.4f}, '
             f'{position_camera[2]:.4f}]\n'
-            f'Rotation 후 : '
-            f'[{position_rotated[0]:.4f}, '
-            f'{position_rotated[1]:.4f}, '
-            f'{position_rotated[2]:.4f}]\n'
             f'Base 좌표   : '
             f'[{position_base[0]:.4f}, '
             f'{position_base[1]:.4f}, '
@@ -125,10 +90,6 @@ class TransformNode(Node):
             f'Yaw         : '
             f'{yaw_camera:.2f}° -> {yaw_base:.2f}°'
         )
-
-        # ====================================================
-        # Publish
-        # ====================================================
 
         output = {
             'x': float(position_base[0])+0.01,
@@ -139,12 +100,8 @@ class TransformNode(Node):
 
         output_msg = String()
         output_msg.data = json.dumps(output)
-
         publisher.publish(output_msg)
 
-    # ========================================================
-    # Camera position -> Base position
-    # ========================================================
 
     @staticmethod
     def transform_position(position_camera):
@@ -156,22 +113,13 @@ class TransformNode(Node):
         position_base = position_rotated + CAMERA_TRANSLATION
 
         return position_rotated, position_base
-
-    # ========================================================
-    # Camera yaw -> Base yaw
-    # Vision: 시계방향 +
-    # Motor : 반시계방향 +
-    # Home  : 180 deg
-    # ========================================================
+    
 
     @staticmethod
     def transform_yaw(yaw_deg):
-        yaw_base = yaw_deg ## 비전 각도 +
+        yaw_base = -yaw_deg ## 비전 각도 +
         return (yaw_base + 180.0) % 360.0 - 180.0
 
-    # ========================================================
-    # Position 읽기
-    # ========================================================
 
     @staticmethod
     def read_position(data):

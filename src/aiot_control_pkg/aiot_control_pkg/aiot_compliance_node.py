@@ -26,7 +26,7 @@ PNEUMATIC_ON_HOLD = 0.5
 PNEUMATIC_OFF_HOLD = 1.0
 
 FLIP_PLACE_X_OFFSET = 0.03
-FLIP_SAFE_Z = 0.20
+FLIP_SAFE_Z = 0.25
 FLIP_DOWN_STEPS = 6
 FLIP_RETREAT_DISTANCE = 0.02
 FLIP_RETREAT_STEPS = 3
@@ -64,6 +64,7 @@ STATE_WAIT_FLIP13_COMPLIANCE_ON = 'WAIT_FLIP13_COMPLIANCE_ON'
 STATE_WAIT_FLIP13_ADAPTIVE = 'WAIT_FLIP13_ADAPTIVE'
 STATE_WAIT_FLIP13_COMPLIANCE_OFF = 'WAIT_FLIP13_COMPLIANCE_OFF'
 
+STATE_WAIT_PRE_PLACE_HOME = 'WAIT_PRE_PLACE_HOME'
 STATE_WAIT_HOME = 'WAIT_HOME'
 
 
@@ -169,7 +170,7 @@ class AIOTControlNode(Node):
 
         data = json.loads(msg.data)
         self.place_position = self.read_position(data)
-        self.place_yaw = math.radians(float(data['angle']))
+        self.place_yaw = math.radians(180.0)
 
         self.task = 'place'
         self.state = STATE_WAIT_JOINT_STATE
@@ -228,7 +229,8 @@ class AIOTControlNode(Node):
         if self.task == 'pick':
             self.start_pick()
         elif self.task == 'place':
-            self.start_place()
+            self.state = STATE_WAIT_PRE_PLACE_HOME
+            self.publish_joint_target(CONTROL_READY)
         elif self.task == 'keep_pick':
             self.start_keep_pick()
 
@@ -483,11 +485,11 @@ class AIOTControlNode(Node):
         if height <= 0.03:
             return 13.0
         if height <= 0.04:
-            return 10.0
+            return 12.0
         if height <= 0.05:
-            return 8.0
+            return 10.0
         if height <= 0.06:
-            return 6.0
+            return 8.0
         if height <= 0.076:
             return 5.0
 
@@ -706,6 +708,10 @@ class AIOTControlNode(Node):
         if self.command_q is not None:
             self.current_q = self.command_q.copy()
             self.command_q = None
+
+        if self.state == STATE_WAIT_PRE_PLACE_HOME:
+            self.start_place()
+            return
 
         if self.state == STATE_WAIT_APPROACH:
             self.state = STATE_WAIT_TARGET
