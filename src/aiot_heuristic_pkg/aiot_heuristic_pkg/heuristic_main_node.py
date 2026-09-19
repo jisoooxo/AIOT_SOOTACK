@@ -20,6 +20,7 @@ from .packing_session import PackingSession
 WORK_QUEUE_SIZE = 16
 M_TO_MM = 1000.0
 MM_TO_M = 0.001
+PLACE_Z_OFFSET_MM = 0.0  # 로봇에 보낼 박스 윗면 Z 보정값
 
 
 class HeuristicMainNode(Node):
@@ -172,7 +173,7 @@ class HeuristicMainNode(Node):
             return
 
         target_mm = self.current_task["target_mm"]
-        payload = {"x": target_mm[0] * MM_TO_M, "y": target_mm[1] * MM_TO_M, "z": target_mm[2] * MM_TO_M}
+        payload = {"x": target_mm[0] * MM_TO_M, "y": target_mm[1] * MM_TO_M, "z": (target_mm[2] + PLACE_Z_OFFSET_MM) * MM_TO_M}
 
         message = String()
         message.data = json.dumps(payload)
