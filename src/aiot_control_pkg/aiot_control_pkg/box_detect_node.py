@@ -444,8 +444,22 @@ class BoxDetectNode(Node):
                 pos = self.tracked_ids.get(box_id)
                 if pos is not None:
                     label = f"PICK id{box_id}(2차) angle={angle2:.1f}"
-                    vis = make_pick_target_vis(pos, r_avg_w, r_avg_h, r_avg_angle, r_avg_cz,
-                                                self.capture.fx, self.capture.fy, label)
+                    # vis = make_pick_target_vis(pos, r_avg_w, r_avg_h, r_avg_angle, r_avg_cz,
+                    #                             self.capture.fx, self.capture.fy, label)
+                    vis = make_pick_target_vis(
+                        pos,
+                        r_avg_w,
+                        r_avg_h,
+                        r_avg_angle,
+                        r_avg_cx,
+                        r_avg_cy,
+                        r_avg_cz,
+                        self.capture.fx,
+                        self.capture.fy,
+                        self.capture.cx,
+                        self.capture.cy,
+                        label
+                    )
                     if vis is not None:
                         self.pick_target_vis[box_id] = vis
 
@@ -541,7 +555,7 @@ class BoxDetectNode(Node):
 
         # ---- /vision/pick_target으로 실제 발행된 최종 박스 표시 (마젠타, pick_target 새로 발행될 때마다 갱신) ----
         for vis in self.pick_target_vis.values():
-            cv2.polylines(color_img, [vis['corners']], isClosed=True, color=(0, 0, 0), thickness=2)
+            # cv2.polylines(color_img, [vis['corners']], isClosed=True, color=(0, 0, 0), thickness=2)
             # cv2.putText(color_img, vis['label'], vis['label_pos'],
             #             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
             cv2.circle(color_img, vis['target_point'], 6, (255, 0, 255), -1)

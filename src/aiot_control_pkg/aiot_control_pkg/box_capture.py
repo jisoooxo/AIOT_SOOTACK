@@ -16,24 +16,24 @@ from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 
 # pc = "JISU"
-pc = "JUNMI"
+pc = "JISU"
 
 # ----------------------------------------------------------------------
 # 카메라/스트림 파라미터
 # ----------------------------------------------------------------------
 W, H, FPS = 1280, 720, 30
-# ROI_X_MIN, ROI_X_MAX = 250, 1280
-# ROI_Y_MIN, ROI_Y_MAX = 250, 650
+ROI_X_MIN, ROI_X_MAX = 250, 1280
+ROI_Y_MIN, ROI_Y_MAX = 250, 650
 resize = 2 # 1/2배로 축소시켜서 imshow 띄움
 
-ROI_X_MIN, ROI_X_MAX = 250, 1280
-ROI_Y_MIN, ROI_Y_MAX = 150, 450
+# ROI_X_MIN, ROI_X_MAX = 250, 1280
+# ROI_Y_MIN, ROI_Y_MAX = 150, 450
 
 # 리얼센스 설정 리셋
 HW_RESET_ON_START = False    # False로 하면 리셋 안하고 이전 설정 그대로. 리셋하면 노출/화이트밸런스 초기화됨. 
 
 # ---- 실행 모드 ----
-MODE = "bag"  # "real" or "bag"
+MODE = "real"  # "real" or "bag"
 BAG_PATH = "/home/leejunmi/realsense_bag/0909(1).db3"
 
 DEPTH_SENSOR_OPTIONS = {

@@ -12,9 +12,6 @@ TOL은 1차 판정용
 솜 13 6.5 5.4
 초록색 15 5.1 3.5
 
-6.6 15.9 5.3 # depth가 0.6 차이
-9.3 9.2 6.9 #  
-14.7 4.8 3.7 (z 0.2)
 """
 
 
@@ -26,9 +23,9 @@ import numpy as np
 # ----------------------------------------------------------------------
 TOL_LOW_Z  = 0.003     # z <= 3
 TOL_Z_THRESH_CM = 3
-TOL_LOW_Z0  = 0.0025     # 3 < z <= 5 # 선풍기, 넓은 면은 0.003, 좁은 면은 0.0025
+TOL_LOW_Z0  = 0.0023     # 3 < z <= 5 # 선풍기, 넓은 면은 0.003, 좁은 면은 0.0025
 TOL_Z_THRESH_CM0 = 5
-TOL_LOW_Z1  = 0.002     # 5 < z <= 10
+TOL_LOW_Z1  = 0.00225     # 5 < z <= 10
 TOL_Z_THRESH_CM1 = 10
 TOL_LOW_Z2  = 0.002     # 10 < z <= 15
 TOL_Z_THRESH_CM2 = 15
@@ -52,14 +49,15 @@ DILATE_SNAP_PX = 40            # top_mask2의 실제 경계에서부터 이정�
 
 # ---- 바닥-윗면 경계(실루엣) 판정 (2차에서만 씀) ----
 EDGE_COMPARE_PX = 3            # 경계 바로 안쪽/바깥쪽 비교 폭(px)
-SILHOUETTE_HEIGHT_TOL_RATIO = 0.15     # 박스 높이의 이 비율만큼을 허용 오차로 씀
-SILHOUETTE_HEIGHT_TOL_MIN_M = 0.0015  # 허용 오차 하한(1.5mm)
+SILHOUETTE_HEIGHT_TOL_RATIO = 0.000000000000001#0.15     # 박스 높이의 이 비율만큼을 허용 오차로 씀
+SILHOUETTE_HEIGHT_TOL_MIN_M = 0.000000000000001#0.0015  # 허용 오차 하한(1.5mm)
 SILHOUETTE_Z_TOL_MULT = 5   # 실루엣 후보도 z_ref(윗면 기준 depth)에서 이 배수(*tol)까지 허용
 
 # ---- OBB 실측 크기 필터 ----
 MIN_AREA_OBB_CM2 = 10.0       # OBB 실측 면적 기준
 
-orientation_axis = 'short'  # 어느 변을 기준으로 orientation 계산할건지(short:y or long:x) -> 출력용
+orientation_axis = 'long'  # 어느 변을 기준으로 orientation 계산할건지(short:y or long:x) -> 출력용
+# 이거다시 확인하기
 
 _SNAP_KERNEL = cv2.getStructuringElement(
     cv2.MORPH_ELLIPSE, (2 * DILATE_SNAP_PX + 1, 2 * DILATE_SNAP_PX + 1))
