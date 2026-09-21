@@ -1,37 +1,8 @@
 #!/usr/bin/env python3
-"""
-alot_arm_control_node.py
-
-4축 Standard-DH + IKPy 기반 Top-down Pick & Place 실기용 Arm Control.
-
-자동 Vision 반복 방식
-- 시작할 때 사용자가 PLACE 좌표(x y z, mm)만 1회 입력한다.
-- Motor Control의 center/home 자세에서 초기 인식 자세
-  [2048, 1790, 2865, 2976] tick으로 이동한다.
-- /box_detector/pick_point를 인식 자세에서만 받아 Camera -> Tool -> Base 변환한다.
-- 변환 좌표를 PICK으로 사용하고 입력한 PLACE로 Pick & Place한다.
-- 완료 후 HOME이 아니라 초기 인식 자세로 복귀한 뒤 다음 물체를 다시 기다린다.
-
-중요:
-HOME = [2048, 2048, 2048, 2048] = q=[0,0,0,0]에서는
-모든 링크와 tool이 +Z를 본다.
-반면 Pick & Place에서는 tool이 -Z를 보는 top-down 자세가 필요하다.
-
-따라서:
-1) HOME -> 첫 PICK_ABOVE:
-   joint-space quintic 준비 이동
-2) PICK_ABOVE 이후:
-   Cartesian 수직/수평 직선 + 각 segment별 quintic time scaling
-
-전체 경로는 실제 모터가 움직이기 전에 먼저 IK 검증/trajectory 생성한다.
-중간 waypoint에서 IK가 실패하면 모터는 움직이지 않는다.
-"""
-
 import json
 import math
 import time
 from collections import deque
-
 import numpy as np
 import rclpy
 from ikpy.chain import Chain
@@ -39,61 +10,13 @@ from ikpy.link import Link, OriginLink
 from rclpy.node import Node
 from geometry_msgs.msg import PointStamped
 from std_msgs.msg import Bool, Float64MultiArray, String
-
-from alot_config import (
-    ARM_NAMED_POSE_TICKS,
-    ARM_NAMED_POSE_JOINT_RAD,
-    MAIN2_ARM_COMMAND_TOPIC,
-    MAIN2_ARM_RESULT_TOPIC,
-    CONTROL_DONE_TOPIC,
-    CONTROL_DT,
-    HOME_JOINT_RAD,
-    DH_A_M,
-    DH_ALPHA_RAD,
-    DH_D_M,
-    DH_D_TOOL,
-    DH_JOINT_SIGN,
-    DH_THETA_OFFSETS_RAD,
-    HORIZONTAL_SPEED,
-    IK_ORIENTATION_TOLERANCE_DEG,
-    IK_POSITION_TOLERANCE_M,
-    JOINT_LIMIT_LOWER_RAD,
-    JOINT_LIMIT_UPPER_RAD,
-    MIN_SEGMENT_TIME,
-    MIN_TRAJECTORY_POINTS,
-    RETURN_HOME_TIME_SEC,
-    PNEUMATIC_CMD_TOPIC,
-    PRESENT_JOINT_MAX_AGE_SEC,
-    PRESENT_JOINT_TOPIC,
-    PNEUMATIC_OFF_WAIT_SEC,
-    PNEUMATIC_ON_WAIT_SEC,
-    R_DH_PHYSICAL_TOOL,
-    R_PHYSICAL_TOOL_CAMERA,
-    STARTUP_TRANSITION_TIME_SEC,
-    T_PHYSICAL_TOOL_CAMERA_M,
-    TOOL_DOWN_VECTOR,
-    TRAVEL_HEIGHT_Z_M,
-    TRAJECTORY_TOPIC,
-    VERTICAL_SPEED,
-    VISION_BASE_Z_OFFSET_M,
-    VISION_CAMERA_FRAME,
-    VISION_PICK_TOPIC,
-    VISION_PICK_BASE_TOPIC,
-    VISION_REARM_DELAY_SEC,
-    Z_COMPENSATION_ENABLED,
-    Z_COMP_A,
-    Z_COMP_B,
-)
-
-
+from alot_config import *
 
 def standard_dh_matrix(theta, d, a, alpha):
-    """Return a 4x4 Standard-DH transform matrix."""
     ct = math.cos(theta)
     st = math.sin(theta)
     ca = math.cos(alpha)
     sa = math.sin(alpha)
-
     return np.array([
         [ct, -st * ca,  st * sa, a * ct],
         [st,  ct * ca, -ct * sa, a * st],
@@ -101,21 +24,7 @@ def standard_dh_matrix(theta, d, a, alpha):
         [0.0,     0.0,      0.0,    1.0],
     ], dtype=float)
 
-
 class StandardDHRevoluteLink(Link):
-    """
-    IKPy-compatible revolute link using the Standard DH convention.
-
-    A_i(q_i) =
-        RotZ(theta_offset + joint_sign*q_i)
-        * TransZ(d)
-        * TransX(a)
-        * RotX(alpha)
-
-    q_i itself remains the physical robot joint angle used everywhere else
-    in this project. `joint_sign` only maps that physical angle into the
-    chosen Standard-DH frame convention.
-    """
 
     def __init__(
         self,
@@ -129,19 +38,16 @@ class StandardDHRevoluteLink(Link):
     ):
         length = max(abs(float(d)), abs(float(a)), 1e-9)
         super().__init__(name=name, length=length, bounds=bounds)
-
         self.d = float(d)
         self.a = float(a)
         self.alpha = float(alpha)
         self.theta_offset = float(theta_offset)
         self.joint_sign = float(joint_sign)
-
         self.has_rotation = True
         self.joint_type = "revolute"
 
     def get_link_frame_matrix(self, q):
         theta = self.theta_offset + self.joint_sign * float(q)
-
         return standard_dh_matrix(
             theta,
             self.d,
@@ -150,22 +56,17 @@ class StandardDHRevoluteLink(Link):
         )
 
     def get_rotation_axis(self):
-        # Standard DH actuator rotation occurs around the incoming +Z axis.
         return np.array([0.0, 0.0, 1.0, 1.0], dtype=float)
 
-
 class StandardDHFixedLink(Link):
-    """Fixed Standard-DH transform, used for J4 -> pneumatic tool tip."""
 
     def __init__(self, name, d=0.0, a=0.0, alpha=0.0, theta=0.0):
         length = max(abs(float(d)), abs(float(a)), 1e-9)
         super().__init__(name=name, length=length)
-
         self.d = float(d)
         self.a = float(a)
         self.alpha = float(alpha)
         self.theta = float(theta)
-
         self.has_rotation = False
         self.joint_type = "fixed"
 
@@ -177,18 +78,17 @@ class StandardDHFixedLink(Link):
             self.alpha,
         )
 
-
 class KeepArmControlNode(Node):
+
     def __init__(self):
         super().__init__("keep_arm_control_node")
-
-        self.done_sub = self.create_subscription(
+        self.create_subscription(
             Bool,
             CONTROL_DONE_TOPIC,
             self.control_done_callback,
             10,
         )
-        self.present_joint_sub = self.create_subscription(
+        self.create_subscription(
             Float64MultiArray,
             PRESENT_JOINT_TOPIC,
             self.present_joint_callback,
@@ -204,13 +104,13 @@ class KeepArmControlNode(Node):
             PNEUMATIC_CMD_TOPIC,
             10,
         )
-        self.vision_pick_sub = self.create_subscription(
+        self.create_subscription(
             PointStamped,
             VISION_PICK_TOPIC,
             self.vision_pick_callback,
             10,
         )
-        self.arm_command_sub = self.create_subscription(
+        self.create_subscription(
             String,
             MAIN2_ARM_COMMAND_TOPIC,
             self.arm_command_callback,
@@ -226,94 +126,31 @@ class KeepArmControlNode(Node):
             VISION_PICK_BASE_TOPIC,
             10,
         )
-
         self.chain = self._build_chain()
-
-        # Motor Control이 시작할 때 2048 HOME으로 이동하므로 동일하게 시작.
         self.current_q = HOME_JOINT_RAD.copy()
-
         self.pending_steps = deque()
         self.busy = False
         self.waiting_control = False
         self.action_timer = None
         self.active_command_id = None
         self.active_command_name = None
-
-        self.latest_vision_pick_base = None
-        self.latest_vision_stamp_sec = None
         self.vision_rearm_time = 0.0
         self._warned_frame_mismatch = False
-
-        # 실제 Dynamixel Present Position 기반 joint state.
-        # Vision 좌표변환에만 사용하며 기존 path planning의 current_q는 건드리지 않는다.
         self.latest_present_q = None
         self.latest_present_q_time = None
         self._last_present_joint_warn_time = 0.0
-
         self.get_logger().info(
             f"Arm Control ready | command_topic={MAIN2_ARM_COMMAND_TOPIC} | "
             f"vision_topic={VISION_PICK_TOPIC}"
-        )
-        self.get_logger().info(
-            f"Present joint feedback | topic={PRESENT_JOINT_TOPIC} | "
-            f"max_age={PRESENT_JOINT_MAX_AGE_SEC:.2f}s"
-        )
-        self.get_logger().info(
-            "Vision Base Z offset | "
-            f"{VISION_BASE_Z_OFFSET_M * 1000.0:+.1f} mm"
-        )
-        self.get_logger().info(
-            "Camera extrinsic | "
-            "camera->tool origin in camera=[34, 27, 70] mm | "
-            "tool->camera in tool="
-            f"{np.round(T_PHYSICAL_TOOL_CAMERA_M * 1000.0, 1).tolist()} mm"
-        )
-        self.get_logger().info(
-            "Camera axes @ center tick | "
-            "+X->Base -Y | +Y->Base +X | +Z->Base +Z"
-        )
-        self.get_logger().info(
-            "Main2 command mode: Vision alone never starts robot motion"
-        )
-        self.get_logger().info(
-            "Z compensation | "
-            f"enabled={Z_COMPENSATION_ENABLED} | "
-            f"error_mm=({Z_COMP_A:.5f})*r_mm+({Z_COMP_B:.3f})"
         )
 
     # ============================================================
     # IKPy Chain
     # ============================================================
+
     def _build_chain(self):
-        """
-        Standard DH 기반 IKPy Chain.
-
-        Table
-        -----------------------------------------------------------------
-        Link   theta                     d        a        alpha
-        -----------------------------------------------------------------
-        J1     q1                        d1       0        -90 deg
-        J2     q2 - 90 deg              0        200mm     0 deg
-        J3     q3                       0        200mm     0 deg
-        J4     q4 + 90 deg              0          0mm   +90 deg
-        Tool   0                         126.1mm    0        0 deg
-        -----------------------------------------------------------------
-
-        d1 = Ground->J1 + J1->J2
-           = 45.95 + 67.45
-           = 113.40 mm
-
-        HOME q=[0,0,0,0] 검증값:
-          tool xyz = [0, 0, 639.5] mm
-          R_base_tool = I
-
-        부호/오프셋은 이전 5-DOF 최종 Standard-DH convention을 그대로 따른다.
-        model q1~q4는 별도 sign inversion 없이 IKPy Chain에 전달한다.
-        """
         links = [OriginLink()]
-
         joint_names = ["joint_1", "joint_2", "joint_3", "joint_4"]
-
         for i, name in enumerate(joint_names):
             links.append(
                 StandardDHRevoluteLink(
@@ -329,7 +166,6 @@ class KeepArmControlNode(Node):
                     ),
                 )
             )
-
         links.append(
             StandardDHFixedLink(
                 name="tool_tip",
@@ -339,108 +175,64 @@ class KeepArmControlNode(Node):
                 theta=0.0,
             )
         )
-
         chain = Chain(
             name="alot_4dof_standard_dh",
             links=links,
             active_links_mask=[False, True, True, True, True, False],
         )
-
-        # Startup numerical verification: DH table must reproduce the
-        # mechanically defined vertical HOME pose exactly.
         full_home = np.zeros(len(chain.links), dtype=float)
         home_fk = chain.forward_kinematics(full_home)
-
         expected_xyz = np.array([
             0.0,
             0.0,
             DH_D_M[0] + DH_A_M[1] + DH_A_M[2] + DH_D_TOOL,
         ])
-
         xyz_error = np.linalg.norm(home_fk[:3, 3] - expected_xyz)
         rot_error = np.linalg.norm(home_fk[:3, :3] - np.eye(3))
-
         if xyz_error > 1e-9 or rot_error > 1e-9:
             raise RuntimeError(
                 "Standard DH HOME verification failed | "
                 f"xyz={np.round(home_fk[:3, 3] * 1000.0, 6).tolist()} mm | "
                 f"xyz_error={xyz_error:.3e} | rot_error={rot_error:.3e}"
             )
-
         return chain
 
     # ============================================================
     # Basic FK / IK helpers
     # ============================================================
-    @staticmethod
-    def _quintic_scaling(tau):
-        return 10.0 * tau**3 - 15.0 * tau**4 + 6.0 * tau**5
 
-    @staticmethod
-    def _within_joint_limits(q):
-        return bool(
-            np.all(q >= JOINT_LIMIT_LOWER_RAD)
-            and np.all(q <= JOINT_LIMIT_UPPER_RAD)
-        )
+    def _camera_point_to_base(self, camera_xyz_m, q):
+        full_q = np.zeros(len(self.chain.links), dtype=float)
+        full_q[1:5] = np.asarray(q, dtype=float)
 
-    def _full_q(self, q):
-        full = np.zeros(len(self.chain.links), dtype=float)
-        full[1:5] = np.asarray(q, dtype=float)
-        return full
-
-    def _fk_matrix(self, q):
-        return self.chain.forward_kinematics(self._full_q(q))
-
-    def _fk_xyz(self, q):
-        return np.asarray(self._fk_matrix(q)[:3, 3], dtype=float)
-
-    def _base_physical_tool_matrix(self, q):
-        """
-        IKPy Standard-DH terminal frame -> real physical tool frame.
-
-        Same origin (pneumatic tip), fixed orientation offset only.
-        """
-        t_base_dh = self._fk_matrix(q)
+        t_base_dh = self.chain.forward_kinematics(full_q)
 
         t_dh_tool = np.eye(4, dtype=float)
         t_dh_tool[:3, :3] = R_DH_PHYSICAL_TOOL
 
-        return t_base_dh @ t_dh_tool
+        t_tool_camera = np.eye(4, dtype=float)
+        t_tool_camera[:3, :3] = R_PHYSICAL_TOOL_CAMERA
+        t_tool_camera[:3, 3] = T_PHYSICAL_TOOL_CAMERA_M
 
-    @staticmethod
-    def _physical_tool_camera_matrix():
-        """Physical tool frame <- Camera optical frame."""
-        transform = np.eye(4, dtype=float)
-        transform[:3, :3] = R_PHYSICAL_TOOL_CAMERA
-        transform[:3, 3] = T_PHYSICAL_TOOL_CAMERA_M
-        return transform
-
-    def _camera_point_to_base(self, camera_xyz_m, q):
-        """Camera optical-frame point -> robot Base-frame point."""
         p_camera = np.ones(4, dtype=float)
         p_camera[:3] = np.asarray(camera_xyz_m, dtype=float)
 
-        t_base_tool = self._base_physical_tool_matrix(q)
-        t_tool_camera = self._physical_tool_camera_matrix()
+        return (t_base_dh @ t_dh_tool @ t_tool_camera @ p_camera)[:3]
 
-        return (t_base_tool @ t_tool_camera @ p_camera)[:3]
+    def _solve_ik(self, xyz_m, seed_q, label="IK"):
+        desired_xyz_m = np.asarray(xyz_m, dtype=float)
 
-    @staticmethod
-    def _orientation_error_deg(solved_tool_z):
-        solved_tool_z = np.asarray(solved_tool_z, dtype=float)
-        solved_tool_z /= np.linalg.norm(solved_tool_z)
+        ik_xyz_m = desired_xyz_m.copy()
+        z_compensation_mm = 0.0
+        if Z_COMPENSATION_ENABLED:
+            r_mm = float(
+                np.hypot(desired_xyz_m[0], desired_xyz_m[1]) * 1000.0
+            )
+            predicted_error_mm = Z_COMP_A * r_mm + Z_COMP_B
+            z_compensation_mm = -predicted_error_mm
+            ik_xyz_m[2] += z_compensation_mm / 1000.0
 
-        target = TOOL_DOWN_VECTOR / np.linalg.norm(TOOL_DOWN_VECTOR)
-        dot = float(np.clip(np.dot(solved_tool_z, target), -1.0, 1.0))
-        return math.degrees(math.acos(dot))
-
-    def _ik_seed_candidates(self, xyz_m, seed_q):
-        """
-        IKPy 최적화가 한 seed에서 local solution에 머무는 경우를 줄이기 위해
-        현재 seed + top-down 대표 자세들을 후보로 사용한다.
-        """
-        yaw = math.atan2(float(xyz_m[1]), float(xyz_m[0]))
-
+        yaw = math.atan2(float(ik_xyz_m[1]), float(ik_xyz_m[0]))
         candidates_deg = [
             np.rad2deg(seed_q),
             [math.degrees(yaw), 60.0, 60.0, 60.0],
@@ -451,76 +243,51 @@ class KeepArmControlNode(Node):
             [math.degrees(yaw), -90.0, 0.0, -90.0],
         ]
 
-        seeds = []
-        for candidate in candidates_deg:
-            q = np.deg2rad(np.asarray(candidate, dtype=float))
-            if self._within_joint_limits(q):
-                seeds.append(q)
-
-        return seeds
-
-    @staticmethod
-    def _apply_z_compensation(xyz_m):
-        """
-        실측 기반 radial Z compensation.
-
-        입력 xyz_m은 사용자가 의도한 실제 Cartesian target이다.
-        X/Y는 유지하고 Z만 보정해서 IK target을 만든다.
-
-        z_error_mm = z_actual_mm - z_target_mm
-                   = Z_COMP_A * r_mm + Z_COMP_B
-
-        따라서:
-            z_ik_mm = z_target_mm - z_error_mm
-        """
-        desired_xyz = np.asarray(xyz_m, dtype=float).copy()
-
-        if not Z_COMPENSATION_ENABLED:
-            return desired_xyz, 0.0, 0.0
-
-        r_mm = float(np.hypot(desired_xyz[0], desired_xyz[1]) * 1000.0)
-        predicted_error_mm = Z_COMP_A * r_mm + Z_COMP_B
-        z_compensation_mm = -predicted_error_mm
-
-        compensated_xyz = desired_xyz.copy()
-        compensated_xyz[2] += z_compensation_mm / 1000.0
-
-        return compensated_xyz, predicted_error_mm, z_compensation_mm
-
-    def _solve_ik(self, xyz_m, seed_q, label="IK"):
-        """
-        위치 + tool-down을 동시에 검사한다.
-        여러 seed를 시도하고 가장 위치 오차가 작은 유효해를 선택한다.
-        """
-        desired_xyz_m = np.asarray(xyz_m, dtype=float)
-        ik_xyz_m, predicted_z_error_mm, z_compensation_mm = (
-            self._apply_z_compensation(desired_xyz_m)
-        )
-
         best = None
         diagnostics = []
 
-        for candidate_seed in self._ik_seed_candidates(ik_xyz_m, seed_q):
+        for candidate in candidates_deg:
+            candidate_seed = np.deg2rad(np.asarray(candidate, dtype=float))
+            if not (
+                np.all(candidate_seed >= JOINT_LIMIT_LOWER_RAD)
+                and np.all(candidate_seed <= JOINT_LIMIT_UPPER_RAD)
+            ):
+                continue
+
+            full_seed = np.zeros(len(self.chain.links), dtype=float)
+            full_seed[1:5] = candidate_seed
+
             try:
                 full_q = self.chain.inverse_kinematics(
                     target_position=ik_xyz_m,
                     target_orientation=TOOL_DOWN_VECTOR,
                     orientation_mode="Z",
-                    initial_position=self._full_q(candidate_seed),
+                    initial_position=full_seed,
                 )
             except Exception as exc:
                 diagnostics.append(f"solver={exc}")
                 continue
 
             q = np.asarray(full_q[1:5], dtype=float)
-
             fk = self.chain.forward_kinematics(full_q)
             solved_xyz = np.asarray(fk[:3, 3], dtype=float)
             solved_tool_z = np.asarray(fk[:3, 2], dtype=float)
 
             pos_error = float(np.linalg.norm(solved_xyz - ik_xyz_m))
-            ori_error = self._orientation_error_deg(solved_tool_z)
-            limits_ok = self._within_joint_limits(q)
+
+            solved_tool_z /= np.linalg.norm(solved_tool_z)
+            target_tool_z = (
+                TOOL_DOWN_VECTOR / np.linalg.norm(TOOL_DOWN_VECTOR)
+            )
+            dot = float(
+                np.clip(np.dot(solved_tool_z, target_tool_z), -1.0, 1.0)
+            )
+            ori_error = math.degrees(math.acos(dot))
+
+            limits_ok = bool(
+                np.all(q >= JOINT_LIMIT_LOWER_RAD)
+                and np.all(q <= JOINT_LIMIT_UPPER_RAD)
+            )
 
             diagnostics.append(
                 f"q={np.round(np.rad2deg(q), 2).tolist()} "
@@ -533,7 +300,6 @@ class KeepArmControlNode(Node):
                 continue
 
             score = pos_error + math.radians(ori_error) * 0.01
-
             if best is None or score < best["score"]:
                 best = {
                     "q": q,
@@ -572,44 +338,34 @@ class KeepArmControlNode(Node):
     # ============================================================
     # Trajectory generation
     # ============================================================
+
     def _build_joint_transition(
         self,
         start_q,
         goal_q,
         duration=STARTUP_TRANSITION_TIME_SEC,
     ):
-        """
-        HOME <-> 작업 자세 사이 준비/복귀 이동에 사용.
-        Cartesian 직선은 아니지만 시작/끝 속도와 가속도는 quintic으로 0.
-        """
         point_count = max(
             MIN_TRAJECTORY_POINTS,
             int(math.ceil(duration / CONTROL_DT)) + 1,
         )
-
         start_q = np.asarray(start_q, dtype=float)
         goal_q = np.asarray(goal_q, dtype=float)
-
         points = []
         for i in range(point_count):
             tau = i / (point_count - 1)
-            s = self._quintic_scaling(tau)
+            s = 10.0 * tau**3 - 15.0 * tau**4 + 6.0 * tau**5
             q = start_q + s * (goal_q - start_q)
-
-            if not self._within_joint_limits(q):
+            if not (
+                np.all(q >= JOINT_LIMIT_LOWER_RAD)
+                and np.all(q <= JOINT_LIMIT_UPPER_RAD)
+            ):
                 raise RuntimeError(
                     "HOME transition joint limit violation: "
                     f"{np.round(np.rad2deg(q), 2).tolist()} deg"
                 )
-
             points.append(q.copy())
-
-        return np.asarray(points), duration
-
-    def _segment_duration(self, start_xyz, goal_xyz, motion_type):
-        distance = float(np.linalg.norm(goal_xyz - start_xyz))
-        speed = VERTICAL_SPEED if motion_type == "vertical" else HORIZONTAL_SPEED
-        return max(distance / speed, MIN_SEGMENT_TIME)
+        return np.asarray(points)
 
     def _build_cartesian_joint_trajectory(
         self,
@@ -621,36 +377,32 @@ class KeepArmControlNode(Node):
     ):
         start_xyz = np.asarray(start_xyz, dtype=float)
         goal_xyz = np.asarray(goal_xyz, dtype=float)
-
         if motion_type == "vertical":
             if not np.allclose(start_xyz[:2], goal_xyz[:2], atol=1e-9):
                 raise ValueError(
                     f"{label}: vertical segment changed X/Y."
                 )
-
         elif motion_type == "horizontal":
             if not np.isclose(start_xyz[2], goal_xyz[2], atol=1e-9):
                 raise ValueError(
                     f"{label}: horizontal segment changed Z."
                 )
-
         else:
             raise ValueError(f"Unknown motion type: {motion_type}")
+        distance = float(np.linalg.norm(goal_xyz - start_xyz))
+        speed = VERTICAL_SPEED if motion_type == "vertical" else HORIZONTAL_SPEED
+        duration = max(distance / speed, MIN_SEGMENT_TIME)
 
-        duration = self._segment_duration(start_xyz, goal_xyz, motion_type)
         point_count = max(
             MIN_TRAJECTORY_POINTS,
             int(math.ceil(duration / CONTROL_DT)) + 1,
         )
-
         q_seed = np.asarray(seed_q, dtype=float).copy()
         q_points = []
-
         for i in range(point_count):
             tau = i / (point_count - 1)
-            s = self._quintic_scaling(tau)
+            s = 10.0 * tau**3 - 15.0 * tau**4 + 6.0 * tau**5
             xyz = start_xyz + s * (goal_xyz - start_xyz)
-
             try:
                 q_seed = self._solve_ik(
                     xyz,
@@ -659,14 +411,13 @@ class KeepArmControlNode(Node):
                 )
             except Exception as exc:
                 raise RuntimeError(str(exc)) from exc
-
             q_points.append(q_seed.copy())
-
-        return np.asarray(q_points), duration
+        return np.asarray(q_points)
 
     # ============================================================
     # Main2 command interface
     # ============================================================
+
     def _publish_arm_result(self, success, message, command_id=None):
         result = {
             "id": self.active_command_id if command_id is None else command_id,
@@ -687,7 +438,6 @@ class KeepArmControlNode(Node):
             self.get_logger().error(f"Invalid Main2 arm command: {exc}")
             self._publish_arm_result(False, f"invalid command: {exc}", -1)
             return
-
         if self.busy or self.waiting_control:
             self._publish_arm_result(
                 False,
@@ -695,10 +445,8 @@ class KeepArmControlNode(Node):
                 command_id,
             )
             return
-
         self.active_command_id = command_id
         self.active_command_name = command_name
-
         try:
             if command_name == "move_named_pose":
                 self._execute_move_named_pose(str(command["pose"]))
@@ -717,21 +465,11 @@ class KeepArmControlNode(Node):
     def _execute_move_named_pose(self, pose_name):
         if pose_name not in ARM_NAMED_POSE_JOINT_RAD:
             raise ValueError(f"unknown named pose: {pose_name}")
-
         target_q = np.asarray(
             ARM_NAMED_POSE_JOINT_RAD[pose_name],
             dtype=float,
         )
-        target_ticks = np.asarray(
-            ARM_NAMED_POSE_TICKS[pose_name],
-            dtype=int,
-        )
-        self.get_logger().info(
-            f"Named pose target | {pose_name} | "
-            f"ticks={target_ticks.tolist()} | "
-            f"q_deg={np.round(np.rad2deg(target_q), 2).tolist()}"
-        )
-        q_points, duration = self._build_joint_transition(
+        q_points = self._build_joint_transition(
             self.current_q,
             target_q,
             duration=STARTUP_TRANSITION_TIME_SEC,
@@ -740,7 +478,6 @@ class KeepArmControlNode(Node):
             (
                 "trajectory",
                 q_points,
-                duration,
                 f"MOVE_NAMED_POSE -> {pose_name}",
             )
         ])
@@ -751,14 +488,12 @@ class KeepArmControlNode(Node):
         pick = np.asarray(command["pick_xyz_m"], dtype=float)
         place = np.asarray(command["place_xyz_m"], dtype=float)
         return_pose = str(command["return_pose"])
-
         if pick.shape != (3,) or place.shape != (3,):
             raise ValueError("pick_xyz_m/place_xyz_m must contain 3 values")
         if not np.all(np.isfinite(pick)) or not np.all(np.isfinite(place)):
             raise ValueError("pick/place contains non-finite value")
         if return_pose not in ARM_NAMED_POSE_JOINT_RAD:
             raise ValueError(f"unknown return pose: {return_pose}")
-
         self.pending_steps = self._plan_pick_place(
             pick,
             place,
@@ -766,44 +501,26 @@ class KeepArmControlNode(Node):
             return_pose,
         )
         self.busy = True
-        self.get_logger().info(
-            "Main2 Pick & Place | "
-            f"pick_mm={np.round(pick * 1000.0, 1).tolist()} | "
-            f"place_mm={np.round(place * 1000.0, 1).tolist()} | "
-            f"return={return_pose}"
-        )
         self._run_next_step()
 
     # ============================================================
     # Vision input / coordinate transform
     # ============================================================
-    def present_joint_callback(self, msg):
-        """
-        Motor Control이 publish한 실제 Dynamixel Present Position q[rad].
 
-        이 값은 Camera -> Base 좌표변환에만 사용한다.
-        기존 trajectory/path planning의 self.current_q는 변경하지 않는다.
-        """
+    def present_joint_callback(self, msg):
         if len(msg.data) != 4:
             return
-
         q = np.asarray(msg.data, dtype=float)
-
         if not np.all(np.isfinite(q)):
             return
-
         self.latest_present_q = q
         self.latest_present_q_time = time.monotonic()
 
     def vision_pick_callback(self, msg):
-        # Vision은 detection pose에서 정지했을 때만 사용한다.
-        # 실제 변환 자세는 Motor Control의 Present Position feedback을 사용한다.
         if self.busy or self.waiting_control:
             return
-
         if time.monotonic() < self.vision_rearm_time:
             return
-
         if msg.header.frame_id and msg.header.frame_id != VISION_CAMERA_FRAME:
             if not self._warned_frame_mismatch:
                 self.get_logger().warning(
@@ -813,7 +530,6 @@ class KeepArmControlNode(Node):
                 )
                 self._warned_frame_mismatch = True
             return
-
         # Main2가 Vision을 사용하는 모든 view pose에서만 좌표를 수용한다.
         # Mode 1: shelf depth views
         # Mode 2: basket view
@@ -836,70 +552,49 @@ class KeepArmControlNode(Node):
         )
         if not at_vision_pose:
             return
-
         camera_xyz = np.array([
             msg.point.x,
             msg.point.y,
             msg.point.z,
         ], dtype=float)
-
         if not np.all(np.isfinite(camera_xyz)):
             return
-
         # Camera is eye-in-hand, so commanded current_q가 아니라
         # 실제 Dynamixel Present Position을 사용해 Camera -> Base 변환한다.
+        present_age = None
+        feedback_warning = None
+
         if (
             self.latest_present_q is None
             or self.latest_present_q_time is None
         ):
-            now = time.monotonic()
-            if now - self._last_present_joint_warn_time >= 1.0:
-                self.get_logger().warning(
-                    "Vision ignored: actual joint feedback not received yet"
-                )
-                self._last_present_joint_warn_time = now
-            return
-
-        present_age = time.monotonic() - self.latest_present_q_time
-
-        if present_age > PRESENT_JOINT_MAX_AGE_SEC:
-            now = time.monotonic()
-            if now - self._last_present_joint_warn_time >= 1.0:
-                self.get_logger().warning(
+            feedback_warning = (
+                "Vision ignored: actual joint feedback not received yet"
+            )
+        else:
+            present_age = time.monotonic() - self.latest_present_q_time
+            if present_age > PRESENT_JOINT_MAX_AGE_SEC:
+                feedback_warning = (
                     "Vision ignored: actual joint feedback is stale | "
                     f"age={present_age:.3f}s"
                 )
+
+        if feedback_warning is not None:
+            now = time.monotonic()
+            if now - self._last_present_joint_warn_time >= 1.0:
+                self.get_logger().warning(feedback_warning)
                 self._last_present_joint_warn_time = now
             return
-
         vision_q = self.latest_present_q.copy()
-
         raw_base_xyz = self._camera_point_to_base(
             camera_xyz,
             vision_q,
         )
-
         # Vision 좌표계 calibration:
         # Camera -> Base 변환 결과 중 Z에만 독립적인 offset을 적용한다.
-        # 기존 robot Z compensation(_apply_z_compensation)은 변경하지 않는다.
+        # Robot Z compensation과 별도로 Vision Z offset만 적용한다.
         base_xyz = raw_base_xyz.copy()
         base_xyz[2] += VISION_BASE_Z_OFFSET_M
-
-        self.get_logger().info(
-            "Vision transform actual q | "
-            f"q_deg={np.round(np.rad2deg(vision_q), 2).tolist()} | "
-            f"feedback_age={present_age:.3f}s"
-        )
-
-        self.get_logger().info(
-            "Vision Z calibration | "
-            f"RAW_BASE={np.round(raw_base_xyz * 1000.0, 1).tolist()} mm | "
-            f"Z_OFFSET={VISION_BASE_Z_OFFSET_M * 1000.0:+.1f} mm | "
-            f"CORRECTED_BASE={np.round(base_xyz * 1000.0, 1).tolist()} mm"
-        )
-
-        self.latest_vision_pick_base = base_xyz
-
         out = PointStamped()
         out.header = msg.header
         out.header.frame_id = "base_link"
@@ -908,11 +603,6 @@ class KeepArmControlNode(Node):
         out.point.z = float(base_xyz[2])
         self.vision_pick_base_pub.publish(out)
 
-        stamp = msg.header.stamp
-        self.latest_vision_stamp_sec = (
-            float(stamp.sec) + float(stamp.nanosec) * 1e-9
-        )
-
     def _build_arc_joint_trajectory(
         self,
         start_xyz,
@@ -920,227 +610,159 @@ class KeepArmControlNode(Node):
         seed_q,
         label="ARC TRANSPORT",
     ):
-        """
-        Base 중심을 기준으로 cylindrical/polar arc trajectory를 만든다.
-
-        r     : start radius -> goal radius
-        theta : start angle  -> goal angle
-        z     : start z      -> goal z
-
-        전체 arc에 quintic scaling을 한 번만 적용하므로,
-        중간 waypoint에서 속도가 0으로 떨어지지 않는다.
-        """
         start_xyz = np.asarray(start_xyz, dtype=float)
         goal_xyz = np.asarray(goal_xyz, dtype=float)
-
         start_r = float(np.hypot(start_xyz[0], start_xyz[1]))
         goal_r = float(np.hypot(goal_xyz[0], goal_xyz[1]))
-
         start_theta = math.atan2(start_xyz[1], start_xyz[0])
         goal_theta = math.atan2(goal_xyz[1], goal_xyz[0])
-
         # J1이 ±180°를 완전히 돌 수 없으므로 atan2의 raw angle을 그대로
         # 연결한다. 예: +170° -> -170°는 180°를 넘는 짧은 길 대신
         # 0° 쪽으로 돌아가는 긴 경로가 되어 J1 limit을 피한다.
         theta_delta = goal_theta - start_theta
-
         # Arc 길이 근사:
         # 평균 반지름에서의 angular distance + radial/z 변화
         mean_r = 0.5 * (start_r + goal_r)
         angular_distance = abs(mean_r * theta_delta)
         radial_distance = abs(goal_r - start_r)
         vertical_distance = abs(goal_xyz[2] - start_xyz[2])
-
         path_length = math.sqrt(
             angular_distance**2
             + radial_distance**2
             + vertical_distance**2
         )
-
         duration = max(
             path_length / HORIZONTAL_SPEED,
             MIN_SEGMENT_TIME,
         )
-
         point_count = max(
             MIN_TRAJECTORY_POINTS,
             int(math.ceil(duration / CONTROL_DT)) + 1,
         )
-
         q_seed = np.asarray(seed_q, dtype=float).copy()
         q_points = []
-
         for i in range(point_count):
             tau = i / (point_count - 1)
-            s = self._quintic_scaling(tau)
-
+            s = 10.0 * tau**3 - 15.0 * tau**4 + 6.0 * tau**5
             radius = start_r + s * (goal_r - start_r)
             theta = start_theta + s * theta_delta
             z = start_xyz[2] + s * (goal_xyz[2] - start_xyz[2])
-
             xyz = np.array([
                 radius * math.cos(theta),
                 radius * math.sin(theta),
                 z,
             ], dtype=float)
-
             q_seed = self._solve_ik(
                 xyz,
                 q_seed,
                 label=f"{label} sample {i + 1}/{point_count}",
             )
             q_points.append(q_seed.copy())
-
-        return np.asarray(q_points), duration
-
-    def _plan_arc_segment(
-        self,
-        planned,
-        start_xyz,
-        goal_xyz,
-        seed_q,
-        label="ARC TRANSPORT",
-    ):
-        q_points, duration = self._build_arc_joint_trajectory(
-            start_xyz,
-            goal_xyz,
-            seed_q,
-            label=label,
-        )
-        planned.append(("trajectory", q_points, duration, label))
-        return q_points[-1].copy()
+        return np.asarray(q_points)
 
     # ============================================================
     # Full-cycle pre-planning
     # ============================================================
-    def _plan_cartesian_segment(
-        self,
-        planned,
-        start_xyz,
-        goal_xyz,
-        motion_type,
-        seed_q,
-        label,
-    ):
-        q_points, duration = self._build_cartesian_joint_trajectory(
-            start_xyz, goal_xyz, motion_type, seed_q, label
-        )
-        planned.append(("trajectory", q_points, duration, label))
-        return q_points[-1].copy()
 
     def _plan_pick_place(self, pick, place, return_q, return_pose_name):
-        """
-        한 사이클 전체를 미리 IK 검증하고 trajectory로 생성한다.
-
-        CURRENT -> PICK_ABOVE      : joint-space
-        PICK_ABOVE -> PICK         : vertical
-        PICK -> PICK_ABOVE         : vertical (absolute Z=TRAVEL_HEIGHT_Z_M)
-        PICK_ABOVE -> PLACE_ABOVE  : one continuous polar arc
-        PLACE_ABOVE -> PLACE       : vertical
-        PLACE -> PLACE_ABOVE       : vertical (absolute Z=TRAVEL_HEIGHT_Z_M)
-        PLACE_ABOVE -> return pose : joint-space
-        """
         pick = np.asarray(pick, dtype=float)
         place = np.asarray(place, dtype=float)
-
         # 주변 적재 박스와 충돌하지 않도록 상대 clearance가 아니라
         # Base-frame 절대 Z 높이까지 수직 상승한 뒤 운반한다.
         # 예: 두 번째/세 번째 박스를 집어도 항상 Z=160 mm까지 올라간다.
         pick_above = pick.copy()
         pick_above[2] = TRAVEL_HEIGHT_Z_M
-
         place_above = place.copy()
         place_above[2] = TRAVEL_HEIGHT_Z_M
-
         if pick[2] >= TRAVEL_HEIGHT_Z_M:
             raise RuntimeError(
                 "PICK Z가 절대 운반 높이보다 높거나 같습니다 | "
                 f"pick_z={pick[2] * 1000.0:.1f} mm | "
                 f"travel_z={TRAVEL_HEIGHT_Z_M * 1000.0:.1f} mm"
             )
-
         if place[2] >= TRAVEL_HEIGHT_Z_M:
             raise RuntimeError(
                 "PLACE Z가 절대 운반 높이보다 높거나 같습니다 | "
                 f"place_z={place[2] * 1000.0:.1f} mm | "
                 f"travel_z={TRAVEL_HEIGHT_Z_M * 1000.0:.1f} mm"
             )
-
         planned = deque()
         virtual_q = self.current_q.copy()
-
-        # 1) HOME/CURRENT -> PICK_ABOVE
         q_pick_above = self._solve_ik(
             pick_above,
             virtual_q,
             label="PICK_ABOVE",
         )
-
-        q_points, duration = self._build_joint_transition(
+        q_points = self._build_joint_transition(
             virtual_q,
             q_pick_above,
         )
         planned.append(
-            ("trajectory", q_points, duration, "HOME/CURRENT -> PICK_ABOVE")
+            ("trajectory", q_points, "HOME/CURRENT -> PICK_ABOVE")
         )
         virtual_q = q_points[-1].copy()
-
-        # 2) PICK_ABOVE -> PICK
-        virtual_q = self._plan_cartesian_segment(
-            planned,
+        q_points = self._build_cartesian_joint_trajectory(
             pick_above,
             pick,
             "vertical",
             virtual_q,
             "PICK_ABOVE -> PICK",
         )
-
-        planned.append(("pneumatic", "on", None, "PNEUMATIC ON"))
-
-        # 3) PICK -> PICK_ABOVE
-        virtual_q = self._plan_cartesian_segment(
-            planned,
+        planned.append(
+            ("trajectory", q_points, "PICK_ABOVE -> PICK")
+        )
+        virtual_q = q_points[-1].copy()
+        planned.append(("pneumatic", "on", "PNEUMATIC ON"))
+        q_points = self._build_cartesian_joint_trajectory(
             pick,
             pick_above,
             "vertical",
             virtual_q,
             "PICK -> PICK_ABOVE",
         )
-
-        # 4) PICK_ABOVE -> PLACE_ABOVE
+        planned.append(
+            ("trajectory", q_points, "PICK -> PICK_ABOVE")
+        )
+        virtual_q = q_points[-1].copy()
         # 중간 BYPASS waypoint 없이 하나의 연속 polar arc로 운반한다.
-        virtual_q = self._plan_arc_segment(
-            planned,
+        q_points = self._build_arc_joint_trajectory(
             pick_above,
             place_above,
             virtual_q,
             label="PICK_ABOVE -> PLACE_ABOVE ARC",
         )
-
-        # 5) PLACE_ABOVE -> PLACE
-        virtual_q = self._plan_cartesian_segment(
-            planned,
+        planned.append(
+            (
+                "trajectory",
+                q_points,
+                "PICK_ABOVE -> PLACE_ABOVE ARC",
+            )
+        )
+        virtual_q = q_points[-1].copy()
+        q_points = self._build_cartesian_joint_trajectory(
             place_above,
             place,
             "vertical",
             virtual_q,
             "PLACE_ABOVE -> PLACE",
         )
-
-        planned.append(("pneumatic", "off", None, "PNEUMATIC OFF"))
-
-        # 6) PLACE -> PLACE_ABOVE
-        virtual_q = self._plan_cartesian_segment(
-            planned,
+        planned.append(
+            ("trajectory", q_points, "PLACE_ABOVE -> PLACE")
+        )
+        virtual_q = q_points[-1].copy()
+        planned.append(("pneumatic", "off", "PNEUMATIC OFF"))
+        q_points = self._build_cartesian_joint_trajectory(
             place,
             place_above,
             "vertical",
             virtual_q,
             "PLACE -> PLACE_ABOVE",
         )
-
-        # 7) PLACE_ABOVE -> manager-selected Depth pose
-        q_points, duration = self._build_joint_transition(
+        planned.append(
+            ("trajectory", q_points, "PLACE -> PLACE_ABOVE")
+        )
+        virtual_q = q_points[-1].copy()
+        q_points = self._build_joint_transition(
             virtual_q,
             np.asarray(return_q, dtype=float),
             duration=RETURN_HOME_TIME_SEC,
@@ -1149,109 +771,88 @@ class KeepArmControlNode(Node):
             (
                 "trajectory",
                 q_points,
-                duration,
                 f"PLACE_ABOVE -> {return_pose_name}",
             )
         )
-
         return planned
 
     # ============================================================
     # Execution
     # ============================================================
+
     def _run_next_step(self):
         if self.waiting_control:
             return
-
         if not self.pending_steps:
             self.busy = False
-            self.latest_vision_pick_base = None
             self.vision_rearm_time = (
                 time.monotonic() + VISION_REARM_DELAY_SEC
-            )
-            self.get_logger().info(
-                "Arm command COMPLETE"
             )
             if self.active_command_id is not None:
                 self._publish_arm_result(True, "completed")
                 self.active_command_id = None
                 self.active_command_name = None
             return
-
-        step_type, payload, duration, label = self.pending_steps.popleft()
-
+        step_type, payload, label = self.pending_steps.popleft()
         if step_type == "pneumatic":
             command = payload
-
             msg = String()
             msg.data = command
             self.pneumatic_pub.publish(msg)
-
             wait_sec = (
                 PNEUMATIC_ON_WAIT_SEC
                 if command == "on"
                 else PNEUMATIC_OFF_WAIT_SEC
             )
-
             self.get_logger().info(f"{label} | wait={wait_sec:.2f}s")
-
             if self.action_timer is not None:
                 self.destroy_timer(self.action_timer)
-
             self.action_timer = self.create_timer(
                 wait_sec,
                 self._pneumatic_wait_done,
             )
             return
-
         q_points = np.asarray(payload, dtype=float)
-
         msg = Float64MultiArray()
         msg.data = [float(len(q_points))]
         msg.data.extend(q_points.reshape(-1).tolist())
-
         self.current_q = q_points[-1].copy()
         self.waiting_control = True
         self.trajectory_pub.publish(msg)
-
         self.get_logger().info(label)
 
     def _pneumatic_wait_done(self):
         if self.action_timer is not None:
             self.destroy_timer(self.action_timer)
             self.action_timer = None
-
         self._run_next_step()
 
     def control_done_callback(self, msg):
         if not msg.data or not self.waiting_control:
             return
-
         self.waiting_control = False
         self._run_next_step()
 
     # ============================================================
     # Shutdown
     # ============================================================
+
     def destroy_node(self):
         if self.action_timer is not None:
             self.destroy_timer(self.action_timer)
             self.action_timer = None
-
         super().destroy_node()
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = KeepArmControlNode()
-
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         node.get_logger().warning("Ctrl+C detected -> Arm Control shutdown")
     finally:
         node.destroy_node()
-
         if rclpy.ok():
             rclpy.shutdown()
 
