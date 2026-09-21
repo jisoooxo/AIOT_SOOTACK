@@ -9,9 +9,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool, Empty, Float64MultiArray, String, Int8
 
-from aiot_control_pkg.kinematics_aiot import AIOTKinematics, JOINT_MIN, JOINT_MAX, wrap_to_pi
-from scipy.optimize import least_squares
-
+from aiot_control_pkg.kinematics_aiot import AIOTKinematics, wrap_to_pi
 # topdown max xy = 0.415
 # X = 0.30 -> y = -0.275 ~ 0.275
 
@@ -300,7 +298,6 @@ class AIOTControlNode(Node):
         self.get_logger().info(f'KEEP PLACE: position={position.tolist()}')
         self.start_topdown(position, self.keep_yaw, 'KEEP PLACE')
 
-
     def start_topdown(self, position, yaw, name):
         self.approach_q, self.target_q, self.lift_q_1, self.lift_q_2 = self.solve_topdown_path(position, self.current_q, yaw, name)
         self.state = STATE_WAIT_APPROACH
@@ -335,13 +332,13 @@ class AIOTControlNode(Node):
 
             target_yaw = wrap_to_pi(target_yaw)
 
-            q_approach = self.solve_topdown_pose(
+            q_approach = self.kinematics.solve_topdown_pose(
                 approach,
                 previous_q,
                 target_yaw
             )
 
-            q_target = self.solve_topdown_pose(
+            q_target = self.kinematics.solve_topdown_pose(
                 position,
                 q_approach,
                 target_yaw
@@ -364,97 +361,6 @@ class AIOTControlNode(Node):
             raise RuntimeError(
                 f'{name} 탑다운 경로 생성 실패: position={position.tolist()}'
             )
-    
-    def solve_topdown_pose(self, position, previous_q, yaw):
-        position = np.asarray(position, dtype=float)
-        previous_q = np.asarray(previous_q, dtype=float)
-        target_axis = np.array([0.0, 0.0, -1.0])
-
-        q1_target = math.atan2(position[1], position[0])
-
-        seeds = [previous_q[:5].copy()]
-
-        for q1 in (previous_q[0], q1_target):
-            for q3_deg in (-90.0, -60.0, -30.0, 0.0, 30.0, 60.0, 90.0):
-                seed = previous_q[:5].copy()
-
-                seed[0] = q1
-                seed[2] = math.radians(q3_deg)
-
-                seeds.append(np.clip(seed, JOINT_MIN[:5], JOINT_MAX[:5]))
-
-        candidates = []
-
-        for seed in seeds:
-            def build_q(active_q):
-                q = previous_q.copy()
-                q[:5] = active_q
-                q[5] = previous_q[5]
-                return q
-
-            def residual(active_q):
-                q = build_q(active_q)
-                transform = self.kinematics.fk_matrix(q)
-                position_error = transform[:3, 3] - position
-                axis_error = transform[:3, 2] - target_axis
-                joint_delta = (q[:5] - previous_q[:5] + np.pi) % (2.0 * np.pi) - np.pi
-                return np.concatenate([100.0 * position_error, 0.6 * axis_error, 0.01 * joint_delta])
-
-            result = least_squares(residual, seed, bounds=(JOINT_MIN[:5], JOINT_MAX[:5]), max_nfev=500)
-
-            q = build_q(result.x)
-            transform = self.kinematics.fk_matrix(q)
-            position_error = np.linalg.norm(transform[:3, 3] - position)
-            axis_error = np.linalg.norm(transform[:3, 2] - target_axis)
-            score = (position_error / 0.005 + axis_error / 0.02)
-            candidates.append((score, position_error, axis_error, q))
-
-        candidates.sort(key=lambda x: x[0])
-        _, position_error, axis_error, q = candidates[0]
-
-        if position_error > 0.005:
-            raise RuntimeError(f'탑다운 IK 위치 오차 초과: {position_error:.4f}m')
-
-        if axis_error > 0.02:
-            raise RuntimeError(f'탑다운 IK 자세 오차 초과: {axis_error:.4f}')
-
-        q[5] = self.target_q6(yaw, q, previous_q[5], position)
-
-        self.get_logger().info(
-            f'탑다운 IK: target={position.round(4).tolist()}, '
-            f'pos_error={position_error:.4f}m, axis_error={axis_error:.4f}, '
-            f'q={np.rad2deg(q).round(1).tolist()}, '
-        )
-
-        return q
-
-    def target_q6(self, target_yaw, q, previous_q6, position):
-
-        base_yaw = math.atan2(position[1], position[0])
-
-        desired_raw = base_yaw - float(target_yaw)
-
-        desired = wrap_to_pi(desired_raw)
-
-        candidates = np.array([
-            desired - 2.0 * math.pi,
-            desired,
-            desired + 2.0 * math.pi
-        ])
-
-        valid = candidates[
-            (candidates >= JOINT_MIN[5]) & (candidates <= JOINT_MAX[5])
-        ]
-
-        if valid.size == 0:
-            selected = float(np.clip(desired, JOINT_MIN[5], JOINT_MAX[5]))
-
-            return selected
-
-        selected = float(valid[np.argmin(np.abs(valid - previous_q6))])
-
-        return selected
-
 
     def start_flip_place(self):
         self.task = 'flip'
@@ -524,7 +430,7 @@ class AIOTControlNode(Node):
         ], dtype=float)
 
         # 현재 LIFT 완료 자세에서 SAFE 위치 + 평행 자세를 동시에 만족하도록 이동
-        q_safe = self.solve_parallel_pose(
+        q_safe = self.kinematics.solve_parallel_pose(
             safe_position, self.current_q
         )
 
@@ -550,7 +456,7 @@ class AIOTControlNode(Node):
                 FLIP_SAFE_Z + (pre_place_z - FLIP_SAFE_Z) * ratio
             ], dtype=float)
 
-            q = self.solve_parallel_pose(position, q_prev)
+            q = self.kinematics.solve_parallel_pose(position, q_prev)
 
             q[5] = math.radians(0.0)
 
@@ -571,7 +477,7 @@ class AIOTControlNode(Node):
             self.height - 0.002 ##### compliance 제어를 하면서 내려가는 높이 #####
         ], dtype=float)
 
-        q_adaptive = self.solve_parallel_pose(adaptive_position, self.current_q)
+        q_adaptive = self.kinematics.solve_parallel_pose(adaptive_position, self.current_q)
 
         q_adaptive[5] = self.current_q[5]
 
@@ -597,7 +503,7 @@ class AIOTControlNode(Node):
             position = place_position.copy()
             position[0] += retreat_dx * (i / FLIP_RETREAT_STEPS)
 
-            q = self.solve_parallel_pose(position, q_prev)
+            q = self.kinematics.solve_parallel_pose(position, q_prev)
             waypoints.append(q)
             q_prev = q
 
@@ -608,7 +514,7 @@ class AIOTControlNode(Node):
             position = retreat_position.copy()
             position[2] = self.height + (FLIP_RISE_Z - self.height) * (i / FLIP_RISE_STEPS)
 
-            q = self.solve_parallel_pose(position, q_prev)
+            q = self.kinematics.solve_parallel_pose(position, q_prev)
             waypoints.append(q)
             q_prev = q
 
@@ -619,90 +525,6 @@ class AIOTControlNode(Node):
         msg = Bool()
         msg.data = enabled
         self.joint6_compliance_pub.publish(msg)
-
-    def solve_parallel_pose(self, position, previous_q):
-        position = np.asarray(position, dtype=float)
-        previous_q = np.asarray(previous_q, dtype=float)
-
-        q1_target = math.atan2(position[1], position[0])
-
-        active_indices = np.array([1, 3, 4], dtype=int)
-
-        seed = previous_q[active_indices].copy()
-
-        radial_axis = np.array([
-            math.cos(q1_target),
-            math.sin(q1_target),
-            0.0
-        ])
-
-        previous_axis = self.kinematics.fk_matrix(previous_q)[:3, 2]
-
-        target_axis = (
-            radial_axis
-            if np.dot(previous_axis, radial_axis) >= 0.0
-            else -radial_axis
-        )
-
-        def build_q(active_q):
-            q = previous_q.copy()
-
-            q[0] = q1_target
-            q[2] = previous_q[2]
-            q[active_indices] = active_q
-
-            return q
-
-        def residual(active_q):
-            q = build_q(active_q)
-
-            transform = self.kinematics.fk_matrix(q)
-
-            position_error = transform[:3, 3] - position
-
-            axis_error = transform[:3, 2] - target_axis
-
-            joint_delta = (
-                q[active_indices] - previous_q[active_indices] + np.pi
-            ) % (2.0 * np.pi) - np.pi
-
-            return np.concatenate([
-                60.0 * position_error,
-                10.0 * axis_error,
-                0.05 * joint_delta
-            ])
-
-        result = least_squares(
-            residual,
-            seed,
-            bounds=(JOINT_MIN[active_indices], JOINT_MAX[active_indices]),
-            max_nfev=500
-        )
-
-        q = build_q(result.x)
-
-        transform = self.kinematics.fk_matrix(q)
-
-        position_error = np.linalg.norm(transform[:3, 3] - position)
-
-        parallel_error = np.linalg.norm(transform[:3, 2] - target_axis)
-
-        if position_error > 0.005:
-            raise RuntimeError(
-                f'평행 IK 위치 오차 초과: {position_error:.4f}m'
-            )
-
-        if parallel_error > 0.05:
-            raise RuntimeError(
-                f'평행 IK 자세 오차 초과: {parallel_error:.4f}'
-            )
-
-        self.get_logger().info(
-            f'평행 IK: target={position.round(4).tolist()}'
-        )
-
-        return q
-
 
     def motion_done_callback(self, _msg):
         if self.command_q is not None:
