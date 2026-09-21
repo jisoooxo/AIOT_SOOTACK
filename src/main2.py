@@ -1,26 +1,9 @@
 #!/usr/bin/env python3
 """
-main2.py
+SOOMAC Main2 manager.
 
-Mode 1: Pick-up zone(Shelf) -> Basket
-- 기존 A/C/F/H 종류/수량 기반 Pick & Place 흐름 유지
-- 실행 전에 터미널에서 A/C/F/H 수량을 입력한다.
-- /main/setting_start = True를 받으면 시작한다.
-
-Mode 2: Setting interaction
-- 기존 Basket -> Rail + Keep -> Rail을 하나로 합친 흐름
-- /main/keep_set : std_msgs/String(JSON)
-    {"keep": true, "keep_count": N}
-    {"keep": false}
-- /main/setting_start : std_msgs/Bool(True)
-- Keep가 있으면 Keep -> Rail을 먼저 수행한다.
-- Keep 작업 완료 후 /main2/keep_set_done = True를 단발 발행한다.
-- 남은 수량만큼 Basket -> Rail을 수행해 Rail 총 3개를 채운다.
-- 전체 완료 후 /main2/setting_done = True를 단발 발행한다.
-
-주의:
-- /ui/select_box는 사용하지 않는다.
-- Mode 2에서는 setting_start와 keep_set 중 어느 것이 먼저 와도 둘 다 준비되면 시작한다.
+Mode 1: Shelf -> Basket
+Mode 2: Keep/Basket -> Rail Setting
 """
 
 import json
@@ -32,32 +15,7 @@ from geometry_msgs.msg import PointStamped
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
 
-from alot_config import (
-    ARM_NAMED_POSE_TICKS,
-    BASKET_DROP_XYZ_M,
-    MAIN2_ARM_COMMAND_TOPIC,
-    MAIN2_ARM_RESULT_TOPIC,
-    MAIN2_BOX_ORDER,
-    MAIN2_CALIBRATION_COMPLETE,
-    MAIN2_KEEP_SET_DONE_TOPIC,
-    MAIN2_KEEP_SET_TOPIC,
-    MAIN2_MAX_COUNT_PER_TYPE,
-    MAIN2_SETTING_DONE_TOPIC,
-    MAIN2_SETTING_START_TOPIC,
-    MAIN2_SETTING_TOTAL_COUNT,
-    MAIN2_STATUS_TOPIC,
-    OCR_SHOW_WAIT_SEC,
-    RAIL_FIRST_PLACE_XYZ_M,
-    RAIL_MAX_BOX_COUNT,
-    RAIL_PLACE_OFFSET_AXIS,
-    RAIL_PLACE_OFFSET_M,
-    SCOUT_MOVE_WAIT_SEC,
-    SHELF_Z_M,
-    STACK_SAMPLE_COUNT,
-    STACK_SAMPLE_MAX_SPREAD_M,
-    STACK_SAMPLE_TIMEOUT_SEC,
-    VISION_PICK_BASE_TOPIC,
-)
+from alot_config import *
 
 MODE_PICKUP_TO_BASKET = 1
 MODE_SETTING = 2
@@ -129,11 +87,9 @@ class Main2Node(Node):
         self.vision_samples = []
         self.sample_done_callback = None
 
-        # Mode 1 state
         self.active_stack = None
         self.stack_done_callback = None
 
-        # Mode 2 state
         self.keep_received = False
         self.keep_enabled = False
         self.keep_count = 0
@@ -150,10 +106,6 @@ class Main2Node(Node):
         if self.mode == MODE_PICKUP_TO_BASKET:
             self.get_logger().info(
                 f"Mode 1 target counts | {self.selected_counts}"
-            )
-        else:
-            self.get_logger().info(
-                "Mode 2 waits for /main/keep_set and /main/setting_start"
             )
 
         self._publish_status(
@@ -174,7 +126,6 @@ class Main2Node(Node):
             return
 
         self.start_requested = True
-        self.get_logger().info("Setting start received | data=True")
 
         if self.mode == MODE_PICKUP_TO_BASKET:
             self._try_start_mode1()
@@ -206,9 +157,6 @@ class Main2Node(Node):
         self._publish_status(
             "MODE1_START",
             counts=self.selected_counts,
-        )
-        self.get_logger().info(
-            f"Main2 MODE 1 START | {MODE_NAMES[MODE_PICKUP_TO_BASKET]}"
         )
         self._send_move("OCR_VIEW", self._wait_first_ocr)
 
@@ -392,9 +340,6 @@ class Main2Node(Node):
         msg.data = True
         self.setting_done_pub.publish(msg)
 
-        self.get_logger().info(
-            f"Publish {MAIN2_SETTING_DONE_TOPIC} = True"
-        )
         self.get_logger().info("Mode 1 COMPLETE")
 
         self._publish_status("MODE1_DONE")
@@ -526,9 +471,6 @@ class Main2Node(Node):
         self.phase_index = 0
         self.active_view_pose = "KEEP_VIEW"
 
-        self.get_logger().info(
-            f"Keep phase START | count={self.phase_target_count}"
-        )
         self._publish_status(
             "KEEP_PHASE_START",
             count=self.phase_target_count,
@@ -559,9 +501,6 @@ class Main2Node(Node):
         self.phase_index = 0
         self.active_view_pose = "BASKET_VIEW"
 
-        self.get_logger().info(
-            f"Basket phase START | repeat_count={remaining}"
-        )
         self._publish_status(
             "BASKET_PHASE_START",
             count=remaining,
@@ -636,9 +575,6 @@ class Main2Node(Node):
         msg.data = True
         self.keep_set_done_pub.publish(msg)
 
-        self.get_logger().info(
-            f"Publish {MAIN2_KEEP_SET_DONE_TOPIC} = True"
-        )
         self._publish_status(
             "KEEP_SET_DONE",
             keep=self.keep_enabled,
@@ -652,9 +588,6 @@ class Main2Node(Node):
         msg.data = True
         self.setting_done_pub.publish(msg)
 
-        self.get_logger().info(
-            f"Publish {MAIN2_SETTING_DONE_TOPIC} = True"
-        )
         self.get_logger().info(
             f"Mode 2 COMPLETE | rail_total={self.rail_index}"
         )
@@ -734,14 +667,6 @@ class Main2Node(Node):
     # Arm request / result
     # ============================================================
     def _send_move(self, pose_name, success_callback):
-        ticks = np.asarray(
-            ARM_NAMED_POSE_TICKS[pose_name],
-            dtype=int,
-        )
-        self.get_logger().info(
-            f"Move request | pose={pose_name} | ticks={ticks.tolist()}"
-        )
-
         self._send_arm_command(
             {
                 "command": "move_named_pose",
@@ -766,7 +691,9 @@ class Main2Node(Node):
         msg.data = json.dumps(payload, ensure_ascii=False)
         self.arm_command_pub.publish(msg)
 
-        self.get_logger().info(f"Arm command -> {payload}")
+        self.get_logger().info(
+            f"Arm command | id={payload['id']} | command={payload['command']}"
+        )
 
     def arm_result_callback(self, msg):
         try:
@@ -970,3 +897,4 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
+
