@@ -2,6 +2,7 @@
 RealSense 캡처 + 필터 
 뎁스맵 기반 대충 위치 잡고 sam2 mask 까지만
 카메라 설정(laser_power, ROI, 해상도), SAM2 박스 프롬프트 확장 비율 바꿀때 여기서 바꾸기
+수정: 박스 살짝 붙어있는 경우 한 박스로 되던거 수정 
 """
 
 from curses.ascii import FF
@@ -15,8 +16,8 @@ import torch
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 
-# pc = "JISU"
 pc = "JISU"
+# pc = "JUNMI"
 
 # ----------------------------------------------------------------------
 # 카메라/스트림 파라미터
@@ -34,7 +35,7 @@ HW_RESET_ON_START = False    # False로 하면 리셋 안하고 이전 설정 �
 
 # ---- 실행 모드 ----
 MODE = "real"  # "real" or "bag"
-BAG_PATH = "/home/leejunmi/realsense_bag/0909(1).db3"
+BAG_PATH = "/home/leejunmi/realsense_bag/0919(5).db3"
 
 DEPTH_SENSOR_OPTIONS = {
     rs.option.enable_auto_exposure: 1,     # 1(켜기)
@@ -54,7 +55,7 @@ COLOR_SENSOR_OPTIONS = {
     rs.option.enable_auto_white_balance: 1,
 }
 
-FLOOR_M = 0.530 
+FLOOR_M = 0.527
 
 # ----------------------------------------------------------------------
 # SAM2 이전
@@ -64,16 +65,19 @@ MORPH_OPEN (작은 노이즈 점 제거) → MORPH_CLOSE (작은 구멍 메꾸�
 # ----------------------------------------------------------------------
 H_MIN_M      = 0.025    # 바닥으로부터 1cm 이상 올라온 물체만
 H_MAX_M      = 0.2      # 20cm 이상은 무시
-MIN_AREA_CM2 = 10.0      # 너무 작은 물체는 제거(높이 컴포넌트 기준)
+MIN_AREA_CM2 = 8.0      # 너무 작은 물체는 제거(높이 컴포넌트 기준)
 MORPH_KERNEL = 10        # 모폴로지 커널
 MORPH_OPEN_ENABLED  = True   # 침식->팽창(작은 노이즈 점 제거) 효과 테스트할 때 False로
-MORPH_CLOSE_ENABLED = True   # 팽창->침식(작은 구멍 메꾸기) 효과 테스트할 때 False로
-
-FLAT_MASK_ENABLED = False     # 평면(윗면) 조건 필터 사용 여부 -> 하니까 마스크가 끊겨서 제외
-FLAT_STD_THRESH_M = 0.005    # 깊이 표준편차 5mm 이하만 평면으로 인정
-FLAT_WIN = 10                # 로컬 윈도우 크기 (px)
+MORPH_CLOSE_ENABLED = False   # 팽창->침식(작은 구멍 메꾸기) 효과 테스트할 때 False로
 
 BOX_EXPAND_RATIO = 0.2  # SAM2 박스 프롬프트 확대 비율
+
+# 수정
+# ---- 붙어있는 박스 분리 (SAM2 point 프롬프트) ----
+BOX_MASK_SKIP_SPLIT_FILL_RATIO = 0.8   # box mask 결과가 이 이하일때만 겹쳐있다고 판단
+POINT_MASK_MIN_FILL_RATIO = 0.8   # point 프롬프트 후보 중 OBB fill_ratio이 이상만 채택
+SPLIT_SAME_IOU = 0.5              # 좌/우 point 결과의 IoU가 이 이상이면 같은 박스를 잡은 것 -> 단일 박스로 합침
+SPLIT_SAME_OVERLAP = 0.8          # 포함비율(inter/min(area))이 이 이상이면(크기 차이 큰 포함 관계) 단일 박스로 합침
 
 DEBUG_ROUGH = False  # 대충 위치 잡기 시각화
 
@@ -90,6 +94,29 @@ elif pc == "JUNMI":
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _obb_fill_ratio(binary_mask):
+    """박스안 마스크 얼마나 차있는지 정도"""
+    ys, xs = np.where(binary_mask)
+    if len(xs) < 5:
+        return 1.0  # 너무 작아서 판단 불가 - 정상으로 취급
+    rect = cv2.minAreaRect(np.column_stack((xs, ys)).astype(np.float32))
+    obb_area = rect[1][0] * rect[1][1]
+    if obb_area <= 0:
+        return 1.0
+    return len(xs) / obb_area
+
+
+def _half_point(xs, ys, seg_mask):
+    """반쪽 픽셀(xs, ys)의 평균 좌표를 point 프롬프트 위치로 씀. 마스크(mask) 밖이면 가장 가까운 픽셀로 옮김."""
+    cx, cy = float(xs.mean()), float(ys.mean())
+    px, py = int(round(cx)), int(round(cy))
+    if seg_mask[py, px]:
+        return px, py
+    k = int(np.argmin((xs - cx) ** 2 + (ys - cy) ** 2))
+    return int(xs[k]), int(ys[k])
+
 
 
 class BoxCapture:
@@ -145,9 +172,7 @@ class BoxCapture:
             self.pipeline.wait_for_frames()   # 온도 레지스터가 채워지도록 첫 프레임 한 장 받기
         except Exception:
             pass
-        for opt in (rs.option.asic_temperature, rs.option.projector_temperature):
-            if depth_sensor.supports(opt):
-                print(f"[temp] {str(opt):26s} = {depth_sensor.get_option(opt):.1f} C  (start)")
+
 
         self.align = rs.align(rs.stream.color)
 
@@ -185,6 +210,25 @@ class BoxCapture:
         # cv2.namedWindow("rough detect", cv2.WINDOW_NORMAL)
         # cv2.resizeWindow("rough detect", W // resize, H // resize) 
 
+
+    def _point_mask(self, pt, other_pt, region):
+        """pt에 positive point 프롬프트를 줘서 나온 후보 3개 중 하나를 고름(region 박스 밖은 버림).
+        반대쪽 점(other_pt)을 포함하지 않는 후보를 우선(=다른 박스를 삼키지 않은 것), 그중 사각형다운
+        (fill_ratio 높은) 큰 것. 그런 후보가 없으면(=박스 하나) 전체 후보에서 같은 기준으로 고름."""
+        pt_masks, _, _ = self.predictor.predict(
+            point_coords=np.array([pt]), point_labels=np.array([1]), multimask_output=True)
+        ex0, ey0, ex1, ey1 = region
+        cands = []
+        for m in pt_masks:
+            c = np.zeros(m.shape, dtype=bool)
+            c[ey0:ey1, ex0:ex1] = m[ey0:ey1, ex0:ex1].astype(bool)
+            cands.append(c)
+        ox, oy = other_pt
+        pool = [c for c in cands if not c[oy, ox]] or cands
+        ok = [c for c in pool if _obb_fill_ratio(c) >= POINT_MASK_MIN_FILL_RATIO]
+        if ok:
+            return max(ok, key=np.count_nonzero)
+        return max(pool, key=_obb_fill_ratio)
 
     # --------------------------------------------------------------
     # 필터 적용 + 높이 기반 위치 잡기 + SAM2 mask 추출
@@ -226,20 +270,11 @@ class BoxCapture:
         if not detect:
             return color_img, depth_m, valid, []
 
+        # 카메라 높이 측정
         print(f'max:{depth_m[valid].max()}, median:{float(np.median(depth_m[valid]))}')
         height = self.floor_m - depth_m
 
-        # 윈도우로 전체 프레임 나눠서 평면 조건 계산(옆면 거르기용, 효과 테스트는 FLAT_MASK_ENABLED로)
-        if FLAT_MASK_ENABLED:
-            mean = cv2.blur(depth_m, (FLAT_WIN, FLAT_WIN))
-            mean_sq = cv2.blur(depth_m * depth_m, (FLAT_WIN, FLAT_WIN))
-            local_std = np.sqrt(np.maximum(mean_sq - mean * mean, 0))
-            flat_mask = local_std < FLAT_STD_THRESH_M
-        else:
-            flat_mask = np.ones_like(valid, dtype=bool)
-
         mask = ((height > H_MIN_M) & (height < H_MAX_M) & valid).astype(np.uint8) * 255
-        mask = cv2.bitwise_and(mask, (flat_mask.astype(np.uint8) * 255))
         if MORPH_OPEN_ENABLED:
             mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self.kernel)
         if MORPH_CLOSE_ENABLED:
@@ -272,11 +307,6 @@ class BoxCapture:
             boxes_for_sam.append([ex0, ey0, ex1, ey1])
             valid_indices.append(i)
 
-        if DEBUG_ROUGH:
-            self._debug_rough(color_img, height, valid, flat_mask, mask,
-                                n, stats, centroids, min_area_px, area_per_px_cm2,
-                                boxes_for_sam)
-
         candidates = []
         if boxes_for_sam:
             self.predictor.set_image(cv2.cvtColor(color_img, cv2.COLOR_BGR2RGB))
@@ -292,8 +322,55 @@ class BoxCapture:
                 masks = masks[:, 0, :, :]
 
             for j, i in enumerate(valid_indices):
+                seg_mask = masks[j].astype(bool)
                 bcx, bcy = int(round(centroids[i][0])), int(round(centroids[i][1]))
-                candidates.append({'seg_mask': masks[j].astype(bool), 'bcx': bcx, 'bcy': bcy})
+                single = {'seg_mask': seg_mask, 'bcx': bcx, 'bcy': bcy,
+                          'source': 'box', 'fill_ratio': _obb_fill_ratio(seg_mask)}
+
+                # box 프롬프트 결과가 사각형답지 않을 때만 분리 시도. 좌/우 분할과 point 위치는
+                # SAM2 마스크가 아니라 height 맵(depth)으로 잡은 컴포넌트 픽셀 기준.
+                if not seg_mask.any() or single['fill_ratio'] >= BOX_MASK_SKIP_SPLIT_FILL_RATIO:
+                    candidates.append(single)
+                    continue
+                comp = (labels == i)
+                ys, xs = np.where(comp)
+                mid = (xs.min() + xs.max()) / 2.0
+                left, right = xs < mid, xs >= mid
+                if np.count_nonzero(left) < min_area_px or np.count_nonzero(right) < min_area_px:
+                    candidates.append(single)
+                    continue
+
+                ptL = _half_point(xs[left], ys[left], comp)
+                ptR = _half_point(xs[right], ys[right], comp)
+                ex0, ey0, ex1, ey1 = boxes_for_sam[j]
+                mL = self._point_mask(ptL, ptR, (ex0, ey0, ex1, ey1))
+                mR = self._point_mask(ptR, ptL, (ex0, ey0, ex1, ey1))
+
+                inter = np.count_nonzero(mL & mR)
+                union = np.count_nonzero(mL | mR)
+                if not mL.any() or not mR.any():
+                    # 한쪽 point 프롬프트가 빈 마스크를 냄 -> 분리 불가, box 프롬프트 결과 그대로 사용.
+                    candidates.append(single)
+                    continue
+                overlap = inter / min(np.count_nonzero(mL), np.count_nonzero(mR))
+                if union == 0 or inter / union >= SPLIT_SAME_IOU or overlap >= SPLIT_SAME_OVERLAP:
+                    # 좌/우 점이 같은 박스를 잡음 -> 박스 하나. box 프롬프트 결과 그대로 사용.
+                    candidates.append(single)
+                    continue
+
+                for name, m, pt in (('ptL', mL, ptL), ('ptR', mR, ptR)):
+                    ys2, xs2 = np.where(m)
+                    candidates.append({
+                        'seg_mask': m,
+                        'bcx': int(round(xs2.mean())), 'bcy': int(round(ys2.mean())),
+                        'source': name, 'fill_ratio': _obb_fill_ratio(m),
+                        'peel_point': pt,
+                    })
+
+        if DEBUG_ROUGH:
+            self._debug_rough(color_img, height, valid, mask,
+                                n, stats, centroids, min_area_px, area_per_px_cm2,
+                                boxes_for_sam, candidates)
 
         return color_img, depth_m, valid, candidates
 
@@ -352,21 +429,22 @@ class BoxCapture:
     # --------------------------------------------------------------
     # SAM2 이전 '대충 위치 잡기' 단계 시각화 
     # --------------------------------------------------------------
-    def _debug_rough(self, color_img, height, valid, flat_mask, mask,
-                     n, stats, centroids, min_area_px, area_per_px_cm2, boxes_for_sam):
-        Hh = mask.shape[0]
+    def _debug_rough(self, color_img, height, valid, mask,
+                     n, stats, centroids, min_area_px, area_per_px_cm2, boxes_for_sam,
+                     candidates=()):
+        Hh, Ww = mask.shape[0], mask.shape[1]
 
         h_range  = ((height > H_MIN_M) & (height < H_MAX_M) & valid).astype(np.uint8) * 255
-        flat_vis = ((flat_mask & self.roi_mask).astype(np.uint8)) * 255
 
         p1 = cv2.cvtColor(h_range,  cv2.COLOR_GRAY2BGR)   # 1) 높이 범위 + valid
-        p2 = cv2.cvtColor(flat_vis, cv2.COLOR_GRAY2BGR)   # 2) 평탄도 마스크
         p3 = cv2.cvtColor(mask,     cv2.COLOR_GRAY2BGR)   # 3) 최종 mask (AND + morph)
         p4 = color_img.copy()                             # 4) 컴포넌트 -> SAM2 프롬프트
+        p5 = color_img.copy()                             # 5) SAM2/peel 최종 candidates
 
-        labels = ["1) height in-range & valid", "2) flat_mask (in ROI)",
-                  "3) final mask (AND+morph)", "4) components -> SAM2 box"]
-        for p, t in zip((p1, p2, p3, p4), labels):
+        labels = ["1) height in-range & valid",
+                  "3) final mask (AND+morph)", "4) components -> SAM2 box",
+                  "5) final candidates (box=단일, ptL/ptR=좌우 point 분리)"]
+        for p, t in zip((p1, p3, p4, p5), labels):
             cv2.putText(p, t, (10, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
             cv2.rectangle(p, (self.x0, self.y0), (self.x1 - 1, self.y1 - 1), (255, 0, 0), 2)
 
@@ -389,9 +467,33 @@ class BoxCapture:
                         f"H_MIN/MAX={H_MIN_M}/{H_MAX_M}m  comp={n - 1}  ->SAM2={len(boxes_for_sam)}",
                     (10, Hh - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-        montage = np.vstack([np.hstack([p1, p2]), np.hstack([p3, p4])])
+        # ---- 5) candidate별로 색 다르게 마스크 칠하고, source(box/ptL/ptR)+fill_ratio+면적 라벨 ----
+        palette = [(255, 0, 255), (0, 255, 0), (255, 255, 0), (0, 165, 255), (255, 0, 0), (0, 0, 255)]
+        for ci, cand in enumerate(candidates):
+            col = palette[ci % len(palette)]
+            seg = cand['seg_mask']
+            p5[seg] = (0.5 * p5[seg] + 0.5 * np.array(col)).astype(np.uint8)
+            ys_obb, xs_obb = np.where(seg)
+            if len(xs_obb) >= 5:
+                obb = cv2.minAreaRect(np.column_stack((xs_obb, ys_obb)).astype(np.float32))
+                obb_pts = np.int32(cv2.boxPoints(obb))
+                cv2.polylines(p5, [obb_pts], isClosed=True, color=col, thickness=2)
+            source = cand.get('source', '?')
+            fr = cand.get('fill_ratio')
+            area_cm2 = int(np.count_nonzero(seg)) * area_per_px_cm2
+            fr_str = f"fr={fr:.2f}" if fr is not None else ""
+            cv2.putText(p5, f"#{ci} {source} {area_cm2:.0f}cm2 {fr_str}",
+                        (cand['bcx'] - 20, cand['bcy'] - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, col, 1)
+            cv2.circle(p5, (cand['bcx'], cand['bcy']), 4, col, -1)
+            if 'peel_point' in cand:
+                cv2.drawMarker(p5, cand['peel_point'], col, cv2.MARKER_CROSS, 12, 2)
+        cv2.putText(p5, f"candidates={len(candidates)}", (10, Hh - 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+        montage = np.vstack([np.hstack([p1, p3]), np.hstack([p4, p5])])
         montage = cv2.resize(montage, (montage.shape[1] // resize, montage.shape[0] // resize))
-        cv2.imshow("rough detect", montage)
+        cv2.imshow("rough detect", montage) # 시각화 4분할화면 
 
 
     def shutdown(self):

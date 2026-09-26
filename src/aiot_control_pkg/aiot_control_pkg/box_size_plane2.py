@@ -2,7 +2,7 @@
 SAM2 seg_mask + depth_m 받아서 박스 하나의 실측 크기/각도/중심좌표를 계산하는 모듈.
 
 1차 z_center 한 개 기준 윗면 좁개 뽑음, 평면 피팅함 -> 경걔판단까지만
-TOL은 1차 판정용
+TOL은 1차 판정용 빡세게 따로 + 2차 널널하게 따로
 """
 
 
@@ -21,7 +21,7 @@ import numpy as np
 # ----------------------------------------------------------------------
 # 윗면 판정 TOL: 박스 높이(z_cm) 구간별로 다르게
 # ----------------------------------------------------------------------
-TOL_LOW_Z  = 0.003     # z <= 3
+TOL_LOW_Z  = 0.0025     # z <= 3
 TOL_Z_THRESH_CM = 3
 TOL_LOW_Z0  = 0.0023     # 3 < z <= 5 # 선풍기, 넓은 면은 0.003, 좁은 면은 0.0025
 TOL_Z_THRESH_CM0 = 5
@@ -33,31 +33,32 @@ TOL_LOW_Z3  = 0.0015     # 15 < z <= 18
 TOL_Z_THRESH_CM3 = 18
 TOL_HIGH_Z = 0.001     # z >  18
 
-# 1차(r1, 평면 피팅용 재료 수집)는 이만큼 더 타이트하게(진짜 윗면만 하도록)
-TOL_R1_TIGHTEN_M = 0.002 # 0.15cm
+# 1차(r1, 평면 피팅용 재료 수집)는 이만큼 더 타이트하게(기존 tol - TOL_R1_TIGHTEN_M)
+TOL_R1_TIGHTEN_M = 0.0015  # 0.15cm
 TOL_R1_MIN_M = 0.0005   # 위에서 빼도 이 밑으로는 안 내려가게(0/음수 방지)
 
-# 윗면 판정 밴드 비대칭: 위 TOL들은 "바닥 쪽" 허용폭(빡빡, 옆면/모서리 컷).
-# 카메라 쪽(depth가 기준보다 작음 = 더 높음)은 이 배수만큼 널널하게 허용.
-TOL_CAM_SIDE_MULT = 1.5
+
+# 카메라 쪽은 기존 TOL보다 이 배수만큼 널널하게 허용.
+TOL_CAM_SIDE_MULT = 1.3
 
 BOX_CENTER_WIN_PX = 10  # (1차 z)박스 중앙 +-px 윈도우에서 z_center 산출
 REFINE_WIN_PX = 5      # (1차 z)OBB 3등분점, z_center 재측정 윈도우(px)
 
-# ---- SAM2 경계 스냅 파라미터 (2차에서만 씀) ----
+# ---- SAM2 경계 스냅 파라미터 (2차에서만 씀)
+# -> 일단 안하도록 함 ,.. ----
 DILATE_SNAP_PX = 40            # top_mask2의 실제 경계에서부터 이정도 px 안에 들어와야댐, 안되면 노란색으로 뜬다
 
 # ---- 바닥-윗면 경계(실루엣) 판정 (2차에서만 씀) ----
 EDGE_COMPARE_PX = 3            # 경계 바로 안쪽/바깥쪽 비교 폭(px)
-SILHOUETTE_HEIGHT_TOL_RATIO = 0.000000000000001#0.15     # 박스 높이의 이 비율만큼을 허용 오차로 씀
-SILHOUETTE_HEIGHT_TOL_MIN_M = 0.000000000000001#0.0015  # 허용 오차 하한(1.5mm)
+SILHOUETTE_HEIGHT_TOL_RATIO = 0.000000000000001 #0.15     # 박스 높이의 이 비율만큼을 허용 오차로 씀
+SILHOUETTE_HEIGHT_TOL_MIN_M = 0.000000000000001 #0.0015  # 허용 오차 하한(1.5mm)
+
 SILHOUETTE_Z_TOL_MULT = 5   # 실루엣 후보도 z_ref(윗면 기준 depth)에서 이 배수(*tol)까지 허용
 
 # ---- OBB 실측 크기 필터 ----
 MIN_AREA_OBB_CM2 = 10.0       # OBB 실측 면적 기준
 
-orientation_axis = 'long'  # 어느 변을 기준으로 orientation 계산할건지(short:y or long:x) -> 출력용
-# 이거다시 확인하기
+orientation_axis = 'long' 
 
 _SNAP_KERNEL = cv2.getStructuringElement(
     cv2.MORPH_ELLIPSE, (2 * DILATE_SNAP_PX + 1, 2 * DILATE_SNAP_PX + 1))
@@ -80,10 +81,9 @@ def _select_tol(z_cm):
 
 
 # --------------------------------------------------------------
-# 1차 전용 윗면 추출: |depth - z_ref| <= tol 인 픽셀을 윗면으로 잡아
+# 1차 (평면 피팅용) 윗면 추출: |depth - z_ref| <= tol 인 픽셀을 윗면으로 잡아
 # 조각 잇기로 정리한 clean_mask와 그 OBB, 그리고 OBB 긴 축을 3구역으로 나눈 뒤
 # 각 구역 중심(t=1/6, 1/2, 5/6)에서 잰 depth를 돌려준다.
-# (평면 피팅 재료 수집용 - 2차처럼 "최종 결과"로는 안 씀. 실루엣 스냅은 2차에서만 함)
 # --------------------------------------------------------------
 def _extract_top_face_r1(seg_mask, depth_m, z_center, tol, overlay, color_img):
     """반환: dict 또는 None(검출 실패 -> 호출부에서 continue)
@@ -210,14 +210,14 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
         return None
 
     # ---- 1차 top 픽셀에 평면(depth ~= c0 + c1*x + c2*y)을 맞춰 픽셀별 기준 z 맵 생성 ----
-    # depth 카메라 특성상 평평한 윗면이라도 위치별 depth가 기울어져 있어서, 단일 기준이나
-    # 계단식 3구역으로는 긴 축 기울기를 다 못 따라가 끝이 TOL 밖으로 잘린다. 평면을 맞춰
-    # 기울기 자체를 제거하고, 각 픽셀의 기준 z를 그 평면값으로 준다. TOL 값은 1차와 동일.
     z_ref_map = None
     p1x, p1y = r1['xs'].astype(np.float32), r1['ys'].astype(np.float32)
     p1d = depth_m[r1['ys'], r1['xs']]
     fit_ok = p1d > 0
     p1x, p1y, p1d = p1x[fit_ok], p1y[fit_ok], p1d[fit_ok]
+    # 로그용 평면 피팅 진단값 (계산에는 영향 없음)
+    plane_fit = {'n_pts': int(p1x.size), 'fallback': True, 'n_keep': 0,
+                 'resid_std_mm': None, 'resid_min_mm': None, 'resid_max_mm': None, 'note': ''}
     if p1x.size >= 30:
         A = np.column_stack((np.ones_like(p1d), p1x, p1y))
         coef, *_ = np.linalg.lstsq(A, p1d, rcond=None)
@@ -226,6 +226,14 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
         keep = np.abs(resid) <= max(0.003, 3.0 * float(np.median(np.abs(resid))))
         if 30 <= int(keep.sum()) < p1x.size:
             coef, *_ = np.linalg.lstsq(A[keep], p1d[keep], rcond=None)
+        resid_final = p1d - A @ coef
+        plane_fit.update(
+            fallback=False, n_keep=int(keep.sum()),
+            resid_std_mm=float(np.std(resid_final[keep])) * 1000.0,
+            resid_min_mm=float(np.min(resid_final)) * 1000.0,   # 부호 있음: 음수=평면보다 카메라 쪽, 양수=평면보다 먼 쪽
+            resid_max_mm=float(np.max(resid_final)) * 1000.0)
+        if int(keep.sum()) < 30:
+            plane_fit['note'] = f"inlier {int(keep.sum())}<30 -> 이상치 제거 재적합 생략"
         sy, sx = np.where(seg_mask)
         z_ref_map = np.full(depth_m.shape, r1['z_center'], dtype=np.float32)
         z_ref_map[sy, sx] = (coef[0] + coef[1] * sx + coef[2] * sy).astype(np.float32)
@@ -243,8 +251,7 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
             zone_idx = np.clip((tt * 3.0).astype(np.int32), 0, 2)
             z_ref_map[sy, sx] = zone_z[zone_idx]
 
-    # ---- 2차: 픽셀별 z_ref_map(평면)으로 dz<=tol 테스트 + 실루엣 스냅만 하고, 나머지 후처리
-    # (closing/dilate-open/침식)는 생략하고 그대로 최종으로 씀 ----
+    # ---- 2차: 픽셀별 z_ref_map(평면)으로 dz<=tol 테스트 + 실루엣 스냅만 ----
     valid2 = seg_mask & (depth_m > 0)
     vals2 = depth_m[valid2]
     ref2 = z_ref_map[valid2]
@@ -265,7 +272,7 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
                            box_height_m * SILHOUETTE_HEIGHT_TOL_RATIO)
     drop = local_outside_depth - depth_m
     # 배경과의 낙차만 보면 옆면 중간 픽셀도 우연히 박스 높이만큼 낙차가 나서 통과할 수 있음 ->
-    # 그 픽셀 자체 depth도 z_ref_map(윗면 기준 평면) 근처여야 한다는 조건을 추가로 걸어서 옆면 오염을 막음.
+    # 그 픽셀 자체 depth도 z_ref_map(윗면 기준 평면) 근처여야 한다는 조건을 추가
     z_ref_ok = np.abs(depth_m - z_ref_map) <= tol * SILHOUETTE_Z_TOL_MULT
     is_true_silhouette = (local_outside_depth > 0) & \
         (np.abs(drop - box_height_m) <= silhouette_tol_m) & \
@@ -297,10 +304,10 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
 
     rect_px = cv2.minAreaRect(np.column_stack((xs, ys)).astype(np.float32))
 
-    # 후처리 없이 곧바로 median depth로 최종 z_center 산출(보고용/back-projection용)
+    # 후처리 없이 곧바로 median depth로 최종 z_center 산출
     z_center = float(np.median(depth_m[top_mask2]))
 
-    # ---- 실측 크기 계산 (침식/보정 없음 - top_mask2 그대로) ----
+    # ---- 실측 크기 계산  ----
     X = (xs - cx) * z_center / fx
     Y = (ys - cy) * z_center / fy
     pts_m = np.column_stack((X, Y)).astype(np.float32)
@@ -322,10 +329,6 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
         fdx, fdy = -fdx, -fdy
 
     angle_deg = float(np.degrees(np.arctan2(-fdx, fdy)))
-    # fa->fb는 긴 변(=짧은 두 변의 중점을 잇는 선) 방향 벡터라서, 위 raw angle_deg 자체가
-    # 이미 표준(cos,sin) 컨벤션 기준 "짧은 변" 각도와 같음 (실측 시뮬레이션으로 검증됨).
-    # 그래서 orientation_axis='short'일 땐 그대로 두고, 'long'을 원할 때만 90도 돌려줘야 함
-    # (기존엔 반대로 돼 있어서 short/long이 서로 뒤바뀌어 나가던 버그).
     if orientation_axis == 'long':
         angle_deg = angle_deg + 90.0
         if angle_deg > 90.0:
@@ -336,9 +339,9 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
     center_y_cm = float(final_rect_m[0][1]) * 100.0
     center_z_cm = z_center * 100.0
 
-    print(f"{label} -> {real_w*100:.1f}, {real_h*100:.1f}, "
-          f"z:{(floor_m - z_center)*100:.1f} cm, angle:{angle_deg:.1f} deg, "
-          f"center(cam)=({center_x_cm:.1f}, {center_y_cm:.1f}, {center_z_cm:.1f}) cm")
+    # print(f"{label} -> {real_w*100:.1f}, {real_h*100:.1f}, "
+    #       f"z:{(floor_m - z_center)*100:.1f} cm, angle:{angle_deg:.1f} deg, "
+    #       f"center(cam)=({center_x_cm:.1f}, {center_y_cm:.1f}, {center_z_cm:.1f}) cm")
 
     # ---- OBB 실측 면적 필터 ----
     if (real_w * 100) * (real_h * 100) < MIN_AREA_OBB_CM2:
@@ -358,8 +361,7 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
     obb_cy_px = float(rect_px[0][1])
     pixel_count = int(np.count_nonzero(top_mask2))
     obb_area_px = rect_px[1][0] * rect_px[1][1]
-    # fill_ratio: OBB 안에 실제로 채워진 픽셀 비율. 옆면 포함 프레임은 OBB가 커지면서
-    # 분자(pixel_count)보다 분모(obb_area)가 더 커짐 -> fill_ratio가 낮아져 자동으로 하위 순위로 밀려남
+    # fill_ratio: OBB 안에 실제로 채워진 픽셀 비율
     fill_ratio = pixel_count / obb_area_px if obb_area_px > 0 else 0
     z_cm_val = (floor_m - z_center) * 100
 
@@ -370,12 +372,11 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
         'angle_deg': angle_deg,
         'center_x_cm': center_x_cm, 'center_y_cm': center_y_cm,
         'center_z_cm': center_z_cm,
+        'plane_fit': plane_fit,
     }
 
 
 if __name__ == "__main__":
-    # ROS 없이 이 파일만 실행해서 크기 계산만 디버깅. box_capture로 캡처 + SAM2까지 받아서
-    # candidate마다 compute_box_size2 호출 -> 화면에 그려서 확인.
     import box_capture
 
     cap = box_capture.BoxCapture()

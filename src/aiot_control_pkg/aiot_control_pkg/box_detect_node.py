@@ -15,14 +15,6 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool, Int8, String
 
-# import pick_comm
-# import box_capture
-# from box_capture import W, H
-# # ---- 크기 계산 방식 ----
-# # from box_size_plane import compute_box_size
-# from box_size_plane2 import compute_box_size2 as compute_box_size
-# #from box_size_3zone import compute_box_size
-
 from . import pick_comm
 from . import box_capture
 from .box_capture import W, H
@@ -30,9 +22,9 @@ from .box_size_plane2 import compute_box_size2 as compute_box_size
 
 
 # ---- 프레임 누적 파라미터 ----
-ACCUM_FRAMES = 10             # 누적할 프레임 수
+ACCUM_FRAMES = 8             # 누적할 프레임 수
 TOP_K_FRAMES = 2              # 상위 몇 프레임을 평균낼지 (fill_ratio 기준)
-REFLIP_FRAMES = 10            # /flip_done 이후 2차 재측정에 모을 프레임 수
+REFLIP_FRAMES = 8            # /flip_done 이후 2차 재측정에 모을 프레임 수
 # ---- 컨베이어 정지 판단 ----
 STABLE_FRAMES    = 4          # 4frame 기준 판단
 STABLE_TOL_CM    = 1.0        # OBB 실측 w, h 각각의 허용 변화량 (cm)
@@ -77,47 +69,36 @@ def assign_ids_ordered(frame_dets_by_x, tracked_ids):
     return result
 
 
+def format_plane_fit(pf):
+    """평면 피팅(r1 윗면 마스크) 진단값을 로그용 문자열로."""
+    if not pf:
+        return "plane=n/a"
+    if pf['fallback']:
+        return f"plane=마스크 부족(점 {pf['n_pts']}<30 -> 3구역 폴백)"
+    s = (f"plane 점={pf['n_pts']} 제외={pf['n_pts'] - pf['n_keep']} "
+         f"잔차 std={pf['resid_std_mm']:.2f}mm 범위=[{pf['resid_min_mm']:+.2f},{pf['resid_max_mm']:+.2f}]mm")
+    if pf['note']:
+        s += f" [{pf['note']}]"
+    return s
+
+
 def release_id(tracked_ids, box_id):
     """vision 쪽에서 해당 idx에 대한 pick_target 발행이 끝났을 때 -> 트래커에서 제거."""
     tracked_ids.pop(box_id, None)
 
 
-def make_pick_target_vis(pos, raw_w, raw_h, angle_deg, target_cx, target_cy, target_cz,
-                          fx, fy, ppx, ppy, label):
+def make_pick_target_vis(target_cx, target_cy, target_cz, fx, fy, ppx, ppy):
     """
-    /vision/pick_target 발행 시점의 박스 실측(cm, short-axis 기준 angle_deg) 표시 -> 잘 발행 된건지 표시하는 거.
-    박스 자체는 pos(tracked_ids 픽셀 위치) 기준으로 그리고, 실제 /vision/pick_target으로 나간
-    중앙점(target_cx, target_cy, target_cz, cm 단위, 카메라 좌표계)은 카메라 내부파라미터로 역투영해서
-    별도 점으로 같이 표시함 (박스 표시 위치와 어긋나면 바로 눈에 띔).
+    /vision/pick_target으로 실제 나간 중앙점(target_cx, target_cy, target_cz, cm 단위, 카메라 좌표계)을
+    카메라 내부파라미터로 역투영해서 화면 표시용 점을 만듦.
     ppx, ppy: 카메라 주점(principal point, self.capture.cx/cy) - box_size_plane2.py의
     X=(xs-cx)*z/fx 투영식의 역변환에 필요.
     """
     if target_cz <= 0:
         return None
-    f = (fx + fy) / 2.0
-    size_long = max(raw_w, raw_h) * f / target_cz
-    size_short = min(raw_w, raw_h) * f / target_cz
-    # box_size_plane2.py의 angle_deg는 atan2(-fdx, fdy)로 정의됨(y축=0도 기준) -> 표준(x축=0도, cos/sin)
-    # 컨벤션에서는 이 값 그대로가 짧은 변 방향, 90도 돌린 (-sin,cos)가 긴 변(fa->fb) 방향이 됨.
-    theta = np.radians(angle_deg)
-    d_long = np.array([-np.sin(theta), np.cos(theta)])
-    d_short = np.array([np.cos(theta), np.sin(theta)])
-    center = np.array([pos['cx'], pos['cy']], dtype=float)
-    corners = np.array([
-        center + sl * (size_long / 2) * d_long + ss * (size_short / 2) * d_short
-        for sl, ss in ((1, 1), (1, -1), (-1, -1), (-1, 1))
-    ], dtype=np.int32)
-
-    # 실제 발행되는 중앙점(cm, 카메라 좌표계) -> 픽셀 역투영
     target_px = int(target_cx * fx / target_cz + ppx)
     target_py = int(target_cy * fy / target_cz + ppy)
-
-    return {
-        'corners': corners,
-        'target_point': (target_px, target_py),
-        'label': label,
-        'label_pos': (int(center[0] - size_long / 2), int(center[1] - size_short / 2 - 8)),
-    }
+    return {'target_point': (target_px, target_py)}
 
 
 class BoxDetectNode(Node):
@@ -148,7 +129,7 @@ class BoxDetectNode(Node):
         self.capture = box_capture.BoxCapture()
 
         # ---- 프레임 누적 버퍼 ----
-        # accum_buf[box_id] = list of (frame_no, real_w, real_h, z_cm, fill_ratio, angle_deg, cx_cm, cy_cm, cz_cm)
+        # accum_buf[box_id] = list of (frame_no, real_w, real_h, z_cm, fill_ratio, angle_deg, cx_cm, cy_cm, cz_cm, plane_fit)
         self.accum_buf = defaultdict(list)
         self.frame_in_window = 0          # 현재 윈도우에서 처리한 프레임 수
         self.global_frame = 0             # 전체 프레임 번호
@@ -212,18 +193,12 @@ class BoxDetectNode(Node):
         self.pick_target_pub.publish(out)
         self.get_logger().info(f"/pick_target 발행: {out.data}")
 
-        # 화면 표시용 - pick_target 발행할 때마다 그 idx 박스를 새로 표시
-        raw_w, raw_h, _, avg_angle, _, _, avg_cz, _ = self.accum_result[plan['idx']]
-        pos = self.tracked_ids.get(plan['idx'])
-        if pos is not None:
-            label = (f"PICK id{plan['idx']} angle={target_box['angle']:.1f} "
-                     f"h={target_box['height']:.1f}cm flip={int(target_box['need_flip'])}")
-            vis = make_pick_target_vis(pos, raw_w, raw_h, avg_angle,
-                                        target_box['cx'], target_box['cy'], target_box['cz'],
-                                        self.capture.fx, self.capture.fy,
-                                        self.capture.cx, self.capture.cy, label)
-            if vis is not None:
-                self.pick_target_vis[plan['idx']] = vis
+        # 화면 표시용 - pick_target 발행할 때마다 그 idx 중앙점을 새로 표시
+        vis = make_pick_target_vis(target_box['cx'], target_box['cy'], target_box['cz'],
+                                    self.capture.fx, self.capture.fy,
+                                    self.capture.cx, self.capture.cy)
+        if vis is not None:
+            self.pick_target_vis[plan['idx']] = vis
 
         # id 해제 -> need_flip=False 기준
         if not target_box['need_flip']:
@@ -259,12 +234,40 @@ class BoxDetectNode(Node):
         self.keep_pose_pub.publish(out)
         self.get_logger().info(f"/vision/keep_pick_pose 발행: {out.data}")
 
+        # 화면 표시용 - keep_pick_pose 발행할 때마다 그 idx의 중앙점만 표시
+        vis = make_pick_target_vis(avg_cx, avg_cy, avg_cz,
+                                    self.capture.fx, self.capture.fy,
+                                    self.capture.cx, self.capture.cy)
+        if vis is not None:
+            self.pick_target_vis[idx] = vis
+
         # 이 keep_pick_pose 발행이 이 idx에 대한 vision 쪽 마지막 개입이므로 바로 id 해제
-        # (여기서 안 지우면 tracked_ids가 절대 안 비어서 다음 턴 재시딩이 영영 안 됨).
         release_id(self.tracked_ids, idx)
         self.rotate_inplace_needed.pop(idx, None)
         self.reflip_pending.pop(idx, None)
         self.get_logger().info(f"idx={idx} keep 발행 완료 - id 즉시 해제")
+
+    def _log_box_ready_summary(self, box_id, entries, top_entries,
+                               avg_w, avg_h, avg_z, avg_angle, avg_cx, avg_cy, avg_cz):
+        """box_ready 이후 box_sizes 발행 시점에 박스별로: 평균에 쓴 프레임값, 평면피팅 잔차, 발행값을 로그로."""
+
+        n_short = sum(1 for e in entries if e[9] and e[9]['fallback'])
+        resid_rng = [(round(e[9]['resid_min_mm'], 2), round(e[9]['resid_max_mm'], 2))
+                     if e[9] and e[9]['resid_max_mm'] is not None else None
+                     for e in entries]
+        lines = [f"Box{box_id}:\n 누적 {len(entries)}프레임 중 fill_ratio 상위 "
+                 f"{len(top_entries)}프레임 평균 사용"]
+        for e in top_entries:
+            lines.append(f" 각 xyz=({e[6]:.1f},{e[7]:.1f},{e[8]:.1f})cm angle={e[5]:.1f}deg | "
+                         f"{format_plane_fit(e[9])}")
+        lines.append(f"  전체 프레임 평면 잔차 범위(mm, -=카메라 쪽 +=먼 쪽): {resid_rng}")
+        if n_short:
+            lines.append(f"  [경고] 평면피팅 마스크 부족 프레임 {n_short}/{len(entries)}")
+            
+        lines.append(f"  평균: w/h/z={avg_w:.1f}/{avg_h:.1f}/{avg_z:.1f}cm "
+                     f" 발행 xyz=({avg_cx:.1f},{avg_cy:.1f},{avg_cz:.1f})cm angle={avg_angle:.1f}deg\n")
+        self.get_logger().info("\n".join(lines))
+        
 
     def start_callback(self, msg):
         start = self.start
@@ -287,6 +290,12 @@ class BoxDetectNode(Node):
         self.box_sizes_sent = False # ready 받으면 리셋, 누적 리셋
         self.accum_result = {}  # 이전 턴 누적 결과(화면 표시용 포함) 정리
         self.pick_target_vis = {}  # 이전 턴 pick_target 시각화 정리
+        # box_ready 올 때마다 트래킹도 전부 리셋.
+        self.tracked_ids = {}
+        self.stable_buf = defaultdict(lambda: deque(maxlen=STABLE_FRAMES))
+        self.stable_flag = {}
+        self.rotate_inplace_needed = {}
+        self.reflip_pending = {}
         self.get_logger().info("box_ready 신호 받음 - 박스 크기 누적 재시작")
 
     def process_frame(self):
@@ -370,8 +379,8 @@ class BoxDetectNode(Node):
                 self.belt_stop_pub.publish(msg)
                 self.belt_stop_sent = True
                 print(f"[belt_stop] → {self.belt_stop}  (stable_count={stable_count})")
-            else:
-                print(f"[belt_stop] 내부 상태만 {self.belt_stop}로 갱신 (이미 발행함 - 재발행 안 함)")
+            # else:
+            #     print(f"[belt_stop] 내부 상태만 {self.belt_stop}로 갱신 (이미 발행함 - 재발행 안 함)")
 
         # ---- ID 부여 -> box_ready 이후 ----
         # (belt_stop=True인 상태에서 box_ready가 True가 되면, 그 다음 프레임의 검출값으로 시딩)
@@ -385,7 +394,6 @@ class BoxDetectNode(Node):
         # ---- ID 배정 ---- -> box_ready 후 시딩된 tracked_ids 기준
         id_to_rank = assign_ids_ordered(frame_dets_by_x, self.tracked_ids)
         # id_to_rank: {box_id: frame_dets_by_x의 인덱스} - 검출 개수가 살아있는 id 개수와 같을 때만 채워짐
-        # (개수가 다르면, 예: 로봇팔이 다른 박스를 가린 경우, 빈 dict -> 이번 프레임은 누적도 안 함)
 
         # ---- 화면에 현재 트래킹 중인 id가 이번 프레임에 보였는지 표시용 ----
         detected_ids = set(id_to_rank.keys())
@@ -397,7 +405,8 @@ class BoxDetectNode(Node):
                 det = frame_dets_by_x[det_j]
                 self.accum_buf[box_id].append((
                     self.global_frame, det['real_w'], det['real_h'], det['z_cm'], det['fill_ratio'],
-                    det['angle_deg'], det['center_x_cm'], det['center_y_cm'], det['center_z_cm']
+                    det['angle_deg'], det['center_x_cm'], det['center_y_cm'], det['center_z_cm'],
+                    det.get('plane_fit')
                 ))
             self.frame_in_window += 1
 
@@ -410,7 +419,8 @@ class BoxDetectNode(Node):
             det = frame_dets_by_x[det_j]
             self.reflip_pending[box_id].append((
                 self.global_frame, det['real_w'], det['real_h'], det['z_cm'], det['fill_ratio'],
-                det['angle_deg'], det['center_x_cm'], det['center_y_cm'], det['center_z_cm']
+                det['angle_deg'], det['center_x_cm'], det['center_y_cm'], det['center_z_cm'],
+                det.get('plane_fit')
             ))
 
             if len(self.reflip_pending[box_id]) >= REFLIP_FRAMES:
@@ -418,8 +428,6 @@ class BoxDetectNode(Node):
                 # fill_ratio 기준 상위 TOP_K_FRAMES 평균 - 메인 accum_result 계산 방식과 동일
                 sorted_entries = sorted(entries, key=lambda e: e[4], reverse=True)
                 top_entries = sorted_entries[:TOP_K_FRAMES]
-                r_avg_w = float(np.mean([e[1] for e in top_entries]))
-                r_avg_h = float(np.mean([e[2] for e in top_entries]))
                 r_avg_angle = float(np.mean([e[5] for e in top_entries]))
                 r_avg_cx = float(np.mean([e[6] for e in top_entries]))
                 r_avg_cy = float(np.mean([e[7] for e in top_entries]))
@@ -439,29 +447,12 @@ class BoxDetectNode(Node):
                 self.pick_target_pub.publish(out)
                 self.get_logger().info(f"/vision/pick_target 발행(2차, 뒤집기 후): {out.data}")
 
-                # 화면 표시용 - 2차 pick_target도 발행할 때마다 새로 표시
-                # (박스 표시 각도는 로봇에 보내는 angle2가 아니라, 재측정된 실제 short-axis 각도 r_avg_angle 사용)
-                pos = self.tracked_ids.get(box_id)
-                if pos is not None:
-                    label = f"PICK id{box_id}(2차) angle={angle2:.1f}"
-                    # vis = make_pick_target_vis(pos, r_avg_w, r_avg_h, r_avg_angle, r_avg_cz,
-                    #                             self.capture.fx, self.capture.fy, label)
-                    vis = make_pick_target_vis(
-                        pos,
-                        r_avg_w,
-                        r_avg_h,
-                        r_avg_angle,
-                        r_avg_cx,
-                        r_avg_cy,
-                        r_avg_cz,
-                        self.capture.fx,
-                        self.capture.fy,
-                        self.capture.cx,
-                        self.capture.cy,
-                        label
-                    )
-                    if vis is not None:
-                        self.pick_target_vis[box_id] = vis
+                # 화면 표시용 - 2차 pick_target도 발행할 때마다 중앙점 새로 표시
+                vis = make_pick_target_vis(r_avg_cx, r_avg_cy, r_avg_cz,
+                                            self.capture.fx, self.capture.fy,
+                                            self.capture.cx, self.capture.cy)
+                if vis is not None:
+                    self.pick_target_vis[box_id] = vis
 
                 del self.reflip_pending[box_id]  # 재측정 끝 - 이 idx는 더 이상 reflip 버퍼에 안 쌓음
 
@@ -495,14 +486,16 @@ class BoxDetectNode(Node):
                 avg_cy = float(np.mean([e[7] for e in top_entries]))
                 avg_cz = float(np.mean([e[8] for e in top_entries]))
                 self.accum_result[box_id] = (avg_w, avg_h, avg_z, avg_angle, avg_cx, avg_cy, avg_cz, top_entries)
-                print(f"[ACCUM] Box{box_id}: w={avg_w:.1f} h={avg_h:.1f} z={avg_z:.1f} cm "
-                      f"angle={avg_angle:.1f} deg "
-                      f"center(cam)=({avg_cx:.1f}, {avg_cy:.1f}, {avg_cz:.1f}) cm "
-                      f"(from frames {[e[0] for e in top_entries]})")
+                # print(f"[ACCUM] Box{box_id}: w={avg_w:.1f} h={avg_h:.1f} z={avg_z:.1f} cm "
+                #       f"angle={avg_angle:.1f} deg "
+                #       f"center(cam)=({avg_cx:.1f}, {avg_cy:.1f}, {avg_cz:.1f}) cm "
+                #       f"(from frames {[e[0] for e in top_entries]})")
 
                 # ---- box_ready로 시작된 사이클이면 이 박스 크기를 /vision/box_sizes 발행에 포함 ----
                 if should_send:
                     box_size_entries.append((box_id, avg_w, avg_h, avg_z))
+                    self._log_box_ready_summary(box_id, entries, top_entries,
+                                                avg_w, avg_h, avg_z, avg_angle, avg_cx, avg_cy, avg_cz)
 
             # ---- 박스 전체(최대 3개) 정보를 한 번에 JSON 배열로 발행 ----
             if should_send and box_size_entries:
@@ -553,11 +546,8 @@ class BoxDetectNode(Node):
             cv2.putText(color_img, f"id{box_id}", (int(pos['cx']) - 15, int(pos['cy']) - 20),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-        # ---- /vision/pick_target으로 실제 발행된 최종 박스 표시 (마젠타, pick_target 새로 발행될 때마다 갱신) ----
+        # ---- /vision/pick_target으로 실제 발행된 최종 중앙점 표시 (마젠타, 새로 발행될 때마다 갱신) ----
         for vis in self.pick_target_vis.values():
-            # cv2.polylines(color_img, [vis['corners']], isClosed=True, color=(0, 0, 0), thickness=2)
-            # cv2.putText(color_img, vis['label'], vis['label_pos'],
-            #             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
             cv2.circle(color_img, vis['target_point'], 6, (255, 0, 255), -1)
 
         # ---- STOP 표시 ----
@@ -565,7 +555,7 @@ class BoxDetectNode(Node):
             cv2.putText(color_img, "STOP", (W - 400, H // 2 -320),
                         cv2.FONT_HERSHEY_DUPLEX, 1.5, (0, 0, 255), 2)
 
-        print(' ')
+        # print(' ')
 
         cv2.putText(color_img,
                     f"Boxes: {count}  fr:{self.global_frame}  win:{self.frame_in_window}/{ACCUM_FRAMES}"
@@ -579,8 +569,8 @@ class BoxDetectNode(Node):
         #           채택은 안 된 후보 (newly_added 조건 등으로 걸러진 것들)
         # - 노란색: 실제로 clean_mask에 추가된 실루엣 픽셀
         silhouette_vis = np.zeros_like(color_img)
-        silhouette_vis[sil_candidate_vis] = (255, 255, 0)  # 하늘색(BGR)
-        silhouette_vis[sil_used_vis] = (0, 255, 255)  # 노란색
+        silhouette_vis[sil_candidate_vis] = (0, 255, 0)  # 하늘색(BGR)
+        silhouette_vis[sil_used_vis] = (0, 0, 0)  # 검정
         color_img = cv2.addWeighted(color_img, 1.0, silhouette_vis, 0.4, 0)  # 실루엣 시각화
 
         self._show(color_img)
@@ -602,6 +592,7 @@ class BoxDetectNode(Node):
 def main():
     rclpy.init()
     node = BoxDetectNode()
+    node.get_logger().info("START: box_detect node")
 
     try:
         running = True
