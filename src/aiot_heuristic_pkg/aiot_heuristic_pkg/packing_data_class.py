@@ -2,7 +2,7 @@
 
 from __future__ import annotations # return 힌트용,아직 정의되지 않은 클래스를 type hint에 사용할 수 있게 함
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -51,6 +51,8 @@ class PlacedBox: # 놓인 박스에 대한 state용
     width_mm: float
     depth_mm: float
     height_mm: float
+    # 완료된 박스도 원본 축 정보를 유지해 렌더에서 face를 표시한다.
+    orientation: Orientation | None = field(default=None, compare=False)
 
     @property
     def top_center_mm(self): 

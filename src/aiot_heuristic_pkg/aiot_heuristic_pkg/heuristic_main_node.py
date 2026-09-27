@@ -39,8 +39,8 @@ class HeuristicMainNode(Node):
 
 
         # 구독
-        # self.create_subscription(String, "/main/box_sizes", self.box_sizes_callback, 10)
-        self.create_subscription(String, "/vision/box_sizes", self.box_sizes_callback, 10)
+        self.create_subscription(String, "/main/box_sizes", self.box_sizes_callback, 10)
+        #self.create_subscription(String, "/vision/box_sizes", self.box_sizes_callback, 10)
         self.create_subscription(Bool, "/main/next_box", self.next_box_callback, 10)
         self.create_subscription(Bool, "/control/pick_done", self.pick_done_callback, 10)
         self.create_subscription(Bool, "/main/pack_reset", self.pack_reset_callback, 10)
@@ -98,7 +98,15 @@ class HeuristicMainNode(Node):
         boxes = []
 
         for value in values:
-            box = BoxSpec(int(value["idx"]), float(value["x"]) * M_TO_MM, float(value["y"]) * M_TO_MM, float(value["z"]) * M_TO_MM)
+            # 비전 pick과 원본 축 정의를 통일: X=긴 변, Y=짧은 변, Z=depth.
+            size_x = float(value["x"])
+            size_y = float(value["y"])
+            box = BoxSpec(
+                int(value["idx"]),
+                max(size_x, size_y) * M_TO_MM,
+                min(size_x, size_y) * M_TO_MM,
+                float(value["z"]) * M_TO_MM,
+            )
             boxes.append(box)
 
         self.batch_count += 1

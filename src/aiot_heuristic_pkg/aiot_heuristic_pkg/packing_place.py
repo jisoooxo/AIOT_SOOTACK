@@ -483,7 +483,10 @@ class PlacementEngine: # 박스 자세 생성부터 후보 좌표, 충돌, gap, 
         if z_mm is None:
             return None
 
-        placed = PlacedBox(box.box_index, x_mm, y_mm, z_mm, width_mm, depth_mm, height_mm)
+        placed = PlacedBox(
+            box.box_index, x_mm, y_mm, z_mm, width_mm, depth_mm, height_mm,
+            orientation=orientation,
+        )
 
         if self.collides(state, placed):
             return None

@@ -116,6 +116,14 @@ class PackingRenderer:
 
         return "#9ECAE1", 0.35
 
+    @staticmethod
+    def box_face(box):
+        if box.orientation is None:
+            return "?"
+        return "".join(
+            name for name in "xyz" if name != box.orientation.top_axis.lower()
+        )
+
     def draw_container_3d(self, axis):
         width = self.container.width_mm * MM_TO_M
         depth = self.container.depth_mm * MM_TO_M
@@ -217,7 +225,7 @@ class PackingRenderer:
                 )
 
                 label = (
-                    f"target {box.box_index}\n"
+                    f"target {box.box_index} | face={self.box_face(box)}\n"
                     f"({center_x:.3f}, {center_y:.3f}, {top_z:.3f}) m"
                 )
 
@@ -236,7 +244,8 @@ class PackingRenderer:
                     center_x,
                     center_y,
                     top_z,
-                    str(box.box_index),
+                    f"{box.box_index}\nface={self.box_face(box)}",
+                    fontsize=8,
                     ha="center",
                     va="bottom",
                 )
@@ -310,7 +319,7 @@ class PackingRenderer:
                 )
 
                 label = (
-                    f"target {box.box_index}\n"
+                    f"target {box.box_index}\nface={self.box_face(box)}\n"
                     f"top Z={top_z:.3f}m"
                 )
 
@@ -320,6 +329,7 @@ class PackingRenderer:
                     label,
                     color="red",
                     weight="bold",
+                    fontsize=9,
                     ha="center",
                     va="center",
                 )
@@ -327,7 +337,8 @@ class PackingRenderer:
                 axis.text(
                     center_y,
                     center_x,
-                    str(box.box_index),
+                    f"{box.box_index}\nface={self.box_face(box)}",
+                    fontsize=8,
                     ha="center",
                     va="center",
                 )
@@ -356,7 +367,23 @@ class PackingRenderer:
             title = f"Packing step {self.step}"
 
         figure.suptitle(title)
-        figure.tight_layout()
+        details = (
+            f"Container X/Y/Z: {self.container.width_mm:g} x "
+            f"{self.container.depth_mm:g} x {self.container.height_mm:g} mm"
+            " | face = original box face pointing up; axis = original axis along container X"
+        )
+        if highlight_box is not None:
+            box = highlight_box
+            alignment = (
+                box.orientation.container_x_axis.lower()
+                if box.orientation is not None else "?"
+            )
+            details += (
+                f"\nTarget {box.box_index}: face={self.box_face(box)}, axis={alignment}"
+                f" | Placed X/Y/Z: {box.width_mm:g} x {box.depth_mm:g} x {box.height_mm:g} mm"
+            )
+        figure.text(0.5, 0.02, details, ha="center", va="bottom", fontsize=9)
+        figure.tight_layout(rect=(0, 0.10, 1, 1))
 
         frame_path = self.frame_directory / f"step_{self.step:03d}.png"
 
