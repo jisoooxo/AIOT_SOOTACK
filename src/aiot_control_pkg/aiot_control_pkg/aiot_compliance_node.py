@@ -227,8 +227,23 @@ class AIOTControlNode(Node):
         if self.task == 'pick':
             self.start_pick()
         elif self.task == 'place':
+            approach = self.place_position.copy()
+            approach[2] += 0.1
+
+            target_yaw = wrap_to_pi(math.radians(180.0))
+
+            q_place_approach = self.kinematics.solve_topdown_pose(
+                approach,
+                self.current_q,
+                target_yaw
+            )
+
+            # CONTROL_READY로 이동하면서 q6을 PLACE용으로 정렬
+            q_control_ready = CONTROL_READY.copy()
+            q_control_ready[5] = q_place_approach[5]
+
             self.state = STATE_WAIT_PRE_PLACE_HOME
-            self.publish_joint_target(CONTROL_READY)
+            self.publish_joint_target(q_control_ready)
         elif self.task == 'keep_pick':
             self.start_keep_pick()
 
@@ -305,7 +320,7 @@ class AIOTControlNode(Node):
 
     def solve_topdown_path(self, position, previous_q, yaw, name):
         approach = position.copy()
-        approach[2] += 0.07
+        approach[2] += 0.1  # 0.07 -> 기존 lift 위치
 
         try:
             target_yaw = yaw
@@ -343,6 +358,10 @@ class AIOTControlNode(Node):
                 q_approach,
                 target_yaw
             )
+
+            if self.task == 'place':
+                q_approach[5] = previous_q[5]
+                q_target[5] = previous_q[5]
 
             q_lift_1 = q_approach.copy()
 

@@ -403,8 +403,10 @@ class BoxDetectNode(Node):
         if self.box_ready and not self.box_sizes_sent:
             for box_id, det_j in id_to_rank.items():
                 det = frame_dets_by_x[det_j]
+                rw, rh = max(det['real_w'], det['real_h']),  min(det['real_w'], det['real_h'])
+
                 self.accum_buf[box_id].append((
-                    self.global_frame, det['real_w'], det['real_h'], det['z_cm'], det['fill_ratio'],
+                    self.global_frame,rw,rh, det['z_cm'], det['fill_ratio'],
                     det['angle_deg'], det['center_x_cm'], det['center_y_cm'], det['center_z_cm'],
                     det.get('plane_fit')
                 ))

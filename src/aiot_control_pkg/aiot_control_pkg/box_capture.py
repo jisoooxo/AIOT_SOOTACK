@@ -24,7 +24,7 @@ pc = "JISU"
 # ----------------------------------------------------------------------
 W, H, FPS = 1280, 720, 30
 ROI_X_MIN, ROI_X_MAX = 250, 1280
-ROI_Y_MIN, ROI_Y_MAX = 250, 650
+ROI_Y_MIN, ROI_Y_MAX = 200,650#250, 650
 resize = 2 # 1/2배로 축소시켜서 imshow 띄움
 
 # ROI_X_MIN, ROI_X_MAX = 250, 1280
@@ -55,7 +55,7 @@ COLOR_SENSOR_OPTIONS = {
     rs.option.enable_auto_white_balance: 1,
 }
 
-FLOOR_M = 0.527
+FLOOR_M = 0.531 #0.527 -> 0.004m
 
 # ----------------------------------------------------------------------
 # SAM2 이전
