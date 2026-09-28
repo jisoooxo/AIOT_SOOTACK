@@ -50,6 +50,8 @@ HARD_TIMEOUT_SECONDS = 2.0 # search 상한선 ㅇㅇ 더 늘릴수도 있음.
 
 # BAF로 좋은 후보부터 DFS → 공통 점수로 최종 선택 → 첫 3개 계획 후 0.5초 더 탐색 → 최대 2초에 종료
 
+from .packing_place import PRIORITIZE_SMALL_Y
+
 class SearchStopped(Exception):
     # 정상이지만 시간 제한 때문에 DFS를 빠져나오는 용도
     pass
@@ -236,12 +238,20 @@ class PackingSearch:
             if placed.y_mm > maximum_y:
                 maximum_y = placed.y_mm
 
-        return (
-            minimum_center_x,
-            center_x_sum,
-            -maximum_y,
-            -y_sum,
-        )
+        if PRIORITIZE_SMALL_Y:
+            return (
+                    -maximum_y,
+                    -y_sum,
+                    minimum_center_x,
+                    center_x_sum,
+                )
+        else:
+            return (
+                minimum_center_x,
+                center_x_sum,
+                -maximum_y,
+                -y_sum,
+            )
 
     def state_cache_key(self, state):
         # 같은 높이맵, 실물 박스, gap이면 이후 계산은 한 번만 함
@@ -306,14 +316,25 @@ class PackingSearch:
             height_key = candidate.orientation.height_cells
             baf = self.baf_key(state, candidate)
 
-            # 바닥 → 먼 X → 작은 Y → 낮은 자세
-            return (
-                floor_key,
-                -candidate.x_cells,
-                candidate.y_cells,
-                height_key,
-                baf,
-            )
+            if PRIORITIZE_SMALL_Y:
+                # 바닥 → 작은 Y → 먼 X → 낮은 자세
+                return (
+                    floor_key,
+                    candidate.y_cells,
+                    -candidate.x_cells,
+                    height_key,
+                    baf,
+                )
+
+            else:
+                # 바닥 → 먼 X → 작은 Y → 낮은 자세
+                return (
+                    floor_key,
+                    -candidate.x_cells,
+                    candidate.y_cells,
+                    height_key,
+                    baf,
+                )
 
         candidates.sort(key=candidate_key)
         return candidates
@@ -467,12 +488,20 @@ class PackingSearch:
             termination_reason=termination_reason,
         )
 
-        reason = (
-            f"common_score; "
-            f"candidate_order=floor_far_x_low_y_low_height_baf; "
-            f"first_corner={str(first_lookahead).lower()}; "
-            f"stop={termination_reason}"
-        )
+        if PRIORITIZE_SMALL_Y:
+            reason = (
+                        f"common_score; "
+                        f"candidate_order=floor_low_y_far_x_low_height_baf; "
+                        f"first_corner={str(first_lookahead).lower()}; "
+                        f"stop={termination_reason}"
+                    )
+        else:
+            reason = (
+                f"common_score; "
+                f"candidate_order=floor_far_x_low_y_low_height_baf; "
+                f"first_corner={str(first_lookahead).lower()}; "
+                f"stop={termination_reason}"
+            )
 
         return BatchPlan(
             placements=placements,

@@ -13,6 +13,8 @@ BOX_GAP_MM = 5.0  # 박스 옆면 사이에 확보할 실제 간격
 WALL_GAP_MM = 0.0  # 컨테이너 벽과 박스 사이 간격
 MIN_SUPPORT = 1.0  # 박스 바닥 지지 비율. 1.0이면 전체 지지
 
+PRIORITIZE_SMALL_Y = True
+
 
 GRIPPER_SIDE_MARGIN_MM = BOX_GAP_MM + GRID_UNIT_MM  # 기본 gap보다 격자 한 칸 더 넓게 검사 (공압그리퍼 옆 폭 감안해서 -> 이건 지수랑 얘기 해야함!!!)
 GRIPPER_HEIGHT_DIFFERENCE_MM = 30.0  # 옆 윗면이 목표 윗면보다 30mm 이상 높으면 거부
@@ -602,8 +604,19 @@ class PlacementEngine: # 박스 자세 생성부터 후보 좌표, 충돌, gap, 
         else:
             selected = candidates
 
+        if PRIORITIZE_SMALL_Y:
+                        # 바닥부터 -> Y가 작은 곳부터 -> 같은 Y면 X가 먼 곳부터 반환
+            selected.sort(
+                key=lambda candidate: (
+                    candidate.z_cells != 0,
+                    candidate.y_cells,
+                    -candidate.x_cells,
+                )
+            )
+
+        else:
         # 바닥부터 -> X가 먼 곳부터 -> 같은 X면 Y가 작은 곳부터 반환
-        selected.sort(key=lambda candidate: (candidate.z_cells != 0, -candidate.x_cells, candidate.y_cells))
+            selected.sort(key=lambda candidate: (candidate.z_cells != 0, -candidate.x_cells, candidate.y_cells))
         return tuple(selected)
 
     def rebuild_placements(self, initial_state, placements, boxes):

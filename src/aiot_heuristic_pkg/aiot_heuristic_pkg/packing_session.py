@@ -9,6 +9,7 @@ from math import isclose
 from .packing_data_class import BoxSpec, ContainerSpec, PlacementCandidate
 from .packing_place import PlacementEngine
 from .packing_search import PackingSearch
+from .packing_place import PRIORITIZE_SMALL_Y
 
 
 TOP_FACE = {
@@ -124,13 +125,21 @@ class PackingSession:
 
                 center_x = placed.x_mm + placed.width_mm / 2
                 center_y = placed.y_mm + placed.depth_mm / 2
+                if PRIORITIZE_SMALL_Y:
+                    # publish할 순서: 작은 Y -> 큰 박스 -> 먼 X
+                    priority = (
+                        -center_y,
+                        box.volume_mm3,
+                        center_x,
+                    )
 
-                # publish할 순서
-                priority = (
-                    box.volume_mm3,
-                    center_x,
-                    -center_y,
-                )
+                else: # volume 큰거 -> 먼 X -> 작은 Y
+                    # publish할 순서
+                    priority = (
+                        box.volume_mm3,
+                        center_x,
+                        -center_y,
+                    )
 
                 next_remaining = (
                     remaining[:position]
