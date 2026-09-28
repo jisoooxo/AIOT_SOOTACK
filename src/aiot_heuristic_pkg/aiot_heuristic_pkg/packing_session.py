@@ -125,20 +125,41 @@ class PackingSession:
 
                 center_x = placed.x_mm + placed.width_mm / 2
                 center_y = placed.y_mm + placed.depth_mm / 2
+
+                min_x = placed.x_mm
+                min_y = placed.y_mm
+                # if PRIORITIZE_SMALL_Y:
+                #     # publish할 순서: 작은 Y -> 큰 박스 -> 먼 X
+                #     priority = (
+                #         -center_y,
+                #         center_x,
+                #         box.volume_mm3,
+                        
+                #     )
+
+                # else: # volume 큰거 -> 먼 X -> 작은 Y
+                #     # publish할 순서
+                #     priority = (
+                #         box.volume_mm3,
+                #         -center_y,
+                #         center_x,
+                #     )
+
                 if PRIORITIZE_SMALL_Y:
                     # publish할 순서: 작은 Y -> 큰 박스 -> 먼 X
                     priority = (
-                        -center_y,
+                        -min_y,
+                        -min_x,
                         box.volume_mm3,
-                        center_x,
+                        
                     )
 
                 else: # volume 큰거 -> 먼 X -> 작은 Y
                     # publish할 순서
                     priority = (
                         box.volume_mm3,
-                        center_x,
-                        -center_y,
+                        -min_y,
+                        -min_x,
                     )
 
                 next_remaining = (

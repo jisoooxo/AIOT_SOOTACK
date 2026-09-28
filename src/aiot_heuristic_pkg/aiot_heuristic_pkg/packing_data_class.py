@@ -10,10 +10,11 @@ if TYPE_CHECKING:
 
 
 
-DEFAULT_CONTAINER_PRESET = "2호"
+DEFAULT_CONTAINER_PRESET = "1호"
 
-CONTAINER_PRESETS_MM = {"0호": (170, 130, 90), "1호": (220, 190, 90), "2호": (270, 180, 150), "2-1호": (350, 250, 100)}
+CONTAINER_PRESETS_MM = {"0호": (170, 130, 90), "1호": (220, 190, 150), "2호": (270, 180, 150), "2-1호": (350, 250, 100)}
 
+# "1호": (220, 190, 90) -> 원래 규격
 
 @dataclass(frozen=True)
 class ContainerSpec: # Container spec. 기존 프리셋 가능. 덮어쓰기도 가능함.

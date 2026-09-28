@@ -220,6 +220,7 @@ X = 5  │ 0  0  0  0
                         area = length_x * length_y
 
                         short_side = min(length_x, length_y)
+                        #short_side = max(length_x, length_y) # 테스트용
                         key = (area, short_side, headroom)
 
                         if key > best:

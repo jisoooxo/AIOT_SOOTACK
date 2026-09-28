@@ -45,8 +45,8 @@ from .packing_data_class import BatchPlan, SearchMetadata
 
 PLANNER_MODE = "REALTIME_BAF"
 
-GRACE_SECONDS = 0.5
-HARD_TIMEOUT_SECONDS = 2.0 # search 상한선 ㅇㅇ 더 늘릴수도 있음.
+GRACE_SECONDS = 1.0
+HARD_TIMEOUT_SECONDS = 2.5 # search 상한선 ㅇㅇ 더 늘릴수도 있음.
 
 # BAF로 좋은 후보부터 DFS → 공통 점수로 최종 선택 → 첫 3개 계획 후 0.5초 더 탐색 → 최대 2초에 종료
 
