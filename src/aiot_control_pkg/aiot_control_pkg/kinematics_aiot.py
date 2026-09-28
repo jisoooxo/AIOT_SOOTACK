@@ -240,7 +240,7 @@ class AIOTKinematics:
                 position_error = transform[:3, 3] - position
                 axis_error = transform[:3, 2] - target_axis
                 joint_delta = (q[:5] - previous_q[:5] + np.pi) % (2.0 * np.pi) - np.pi
-                return np.concatenate([100.0 * position_error, 0.6 * axis_error, 0.01 * joint_delta])
+                return np.concatenate([85.0 * position_error, 0.6 * axis_error, 0.01 * joint_delta])
 
             result = least_squares(residual, seed, bounds=(JOINT_MIN[:5], JOINT_MAX[:5]), max_nfev=500)
 

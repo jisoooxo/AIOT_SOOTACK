@@ -36,6 +36,7 @@ class MainNode(Node):
 
         # 첫 사이클에는 keep 영역이 비어 있으므로 바로 keep 가능
         self.keep_set_done = True
+        self.setting_done = False
 
         # keep_set_done을 기다리는 동안 저장할 index
         self.pending_keep_index = None
@@ -95,30 +96,38 @@ class MainNode(Node):
         if not msg.data:
             return
 
-        # 첫 사이클에서는 Main2 setting 바로 시작
+        # 첫 사이클은 Main2 setting을 먼저 완료해야 함
+        self.setting_done = False
         self.state = WAIT_SETTING_DONE
+
+        keep_msg = String()
+        keep_msg.data = json.dumps({
+            'keep': False
+        })
+        self.keep_set_pub.publish(keep_msg)
 
         self.publish_true(self.setting_start_pub)
 
     def setting_done_callback(self, msg):
 
-        if self.state != WAIT_SETTING_DONE:
-            return
-
         if not msg.data:
             return
 
-        self.start_trigger()
+        self.setting_done = True
+
+        if self.state == WAIT_SETTING_DONE:
+            self.start_trigger()
 
     def start_trigger(self):
 
         self.count = 0
         self.keep_count = 0
+        self.pending_keep_index = None
+
+        self.state = WAIT_BELT_STOP_DONE
 
         self.publish_true(self.vision_start_pub)
         self.publish_true(self.belt_start_pub)
-
-        self.state = WAIT_BELT_STOP_DONE
 
 
     def belt_stop_done_callback(self, msg):
@@ -129,9 +138,14 @@ class MainNode(Node):
         if not msg.data:
             return
 
+        self.state = WAIT_BOX_SIZES
+
+        # 현재 박스 3개 Vision 시작
         self.publish_true(self.box_ready_pub)
 
-        self.state = WAIT_BOX_SIZES
+        # 다음 박스 3개 Main2 setting 시작
+        self.setting_done = False
+        self.publish_true(self.setting_start_pub)
 
     def box_sizes_callback(self, msg):
         if self.state != WAIT_BOX_SIZES:
@@ -165,9 +179,8 @@ class MainNode(Node):
                 'axis': axis
             })
 
-            self.plan_pick_pub.publish(plan_msg)
-
             self.state = WAIT_PLACE_DONE
+            self.plan_pick_pub.publish(plan_msg)
 
         elif command == 'keep':
 
@@ -184,7 +197,7 @@ class MainNode(Node):
             self.state = WAIT_RESET
 
             self.get_logger().info(
-                'pack 로직 구현X.'
+                'reset 로직 구현X.'
             )  ## 상자 바꾸는거랑 찐리셋이랑 구분 일단 안하는 걸로 짤게용
 
         else:
@@ -199,8 +212,8 @@ class MainNode(Node):
         msg.data = int(self.pending_keep_index)
         self.keep_ready_pub.publish(msg)
 
-        self.pending_keep_index = None
         self.state = WAIT_KEEP_DONE
+        self.pending_keep_index = None
 
     def keep_set_done_callback(self, msg):
 
@@ -217,6 +230,9 @@ class MainNode(Node):
     def place_done_callback(self, msg):
 
         if self.state != WAIT_PLACE_DONE:
+            return
+
+        if not msg.data:
             return
 
         self.count += 1
@@ -255,10 +271,6 @@ class MainNode(Node):
         # 다음 keep 동작은 Main2의 keep_set_done을 받을 때까지 금지
         self.keep_set_done = False
 
-        # 다음 Trigger는 Main2의 setting_done을 받을 때까지 금지
-        self.state = WAIT_SETTING_DONE
-
-        # 이번 사이클 keep 정보 전달
         keep_msg = String()
 
         if self.keep_count > 0:
@@ -273,8 +285,12 @@ class MainNode(Node):
 
         self.keep_set_pub.publish(keep_msg)
 
-        # Main2 setting 시작
-        self.publish_true(self.setting_start_pub)
+        # 다음 박스 setting이 이미 끝났다면 바로 다음 사이클
+        if self.setting_done:
+            self.start_trigger()
+
+        else:
+            self.state = WAIT_SETTING_DONE
 
 
 def main(args=None):
