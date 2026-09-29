@@ -6,6 +6,7 @@ AIOT용 박스 검출 ROS2 노드.
 box_detect_new는 ID 트래킹/프레임 누적/belt_stop/ROS 토픽만 처리
 '''
 
+import time
 from collections import defaultdict, deque
 
 import cv2
@@ -25,6 +26,7 @@ from .box_size_plane2 import compute_box_size2 as compute_box_size
 ACCUM_FRAMES = 8             # 누적할 프레임 수
 TOP_K_FRAMES = 2              # 상위 몇 프레임을 평균낼지 (fill_ratio 기준)
 REFLIP_FRAMES = 8            # /flip_done 이후 2차 재측정에 모을 프레임 수
+REFLIP_VIS_SEC = 3.0         # 2차 재측정 결과 박스 화면 표시 유지 시간(s)
 # ---- 컨베이어 정지 판단 ----
 STABLE_FRAMES    = 4          # 4frame 기준 판단
 STABLE_TOL_CM    = 1.0        # OBB 실측 w, h 각각의 허용 변화량 (cm)
@@ -89,10 +91,7 @@ def release_id(tracked_ids, box_id):
 
 def make_pick_target_vis(target_cx, target_cy, target_cz, fx, fy, ppx, ppy):
     """
-    /vision/pick_target으로 실제 나간 중앙점(target_cx, target_cy, target_cz, cm 단위, 카메라 좌표계)을
-    카메라 내부파라미터로 역투영해서 화면 표시용 점을 만듦.
-    ppx, ppy: 카메라 주점(principal point, self.capture.cx/cy) - box_size_plane2.py의
-    X=(xs-cx)*z/fx 투영식의 역변환에 필요.
+    /vision/pick_target으로 실제 나간 중앙점 시각화
     """
     if target_cz <= 0:
         return None
@@ -129,11 +128,14 @@ class BoxDetectNode(Node):
         self.capture = box_capture.BoxCapture()
 
         # ---- 프레임 누적 버퍼 ----
-        # accum_buf[box_id] = list of (frame_no, real_w, real_h, z_cm, fill_ratio, angle_deg, cx_cm, cy_cm, cz_cm, plane_fit)
+        # accum_buf[box_id] = list of (frame_no, real_w, real_h, z_cm, fill_ratio, angle_deg, cx_cm, cy_cm, cz_cm, plane_fit, rect_px)
         self.accum_buf = defaultdict(list)
         self.frame_in_window = 0          # 현재 윈도우에서 처리한 프레임 수
         self.global_frame = 0             # 전체 프레임 번호
         self.accum_result = {}            # {box_id: (avg_w, avg_h, avg_z, avg_angle, avg_cx, avg_cy, avg_cz, [...])}
+        # {box_id: {'rect_px', 'w', 'h', 'z', 'angle', 'reflip', 'expire'}} fill_ratio 1등 프레임 OBB + 평균값 - box_sizes 발행 후 화면 표시용
+        # 뒤집기 박스는 2차 재측정 결과로 덮어쓰고 REFLIP_VIS_SEC 동안만 표시 (expire=None이면 id 해제 때까지)
+        self.accum_vis = {}
 
         # ---- 안정성 트래킹 버퍼 ----
         # stable_buf[rank_idx] = deque of (rw_cm, rh_cm), 최근 STABLE_FRAMES개
@@ -155,7 +157,7 @@ class BoxDetectNode(Node):
         # /flip_done 왔을 때 angle2 계산(pick_comm.compute_second_angle)에 재사용 - need_flip=True였던 idx만 값이 있음.
         self.rotate_inplace_needed = {}
         # reflip_pending[idx] = /flip_done 받은 이후 새로 쌓는 재측정 프레임 리스트.
-        #  (frame_no, real_w, real_h, z_cm, fill_ratio, angle_deg, cx_cm, cy_cm, cz_cm)
+        #  (frame_no, real_w, real_h, z_cm, fill_ratio, angle_deg, cx_cm, cy_cm, cz_cm, plane_fit, rect_px)
         self.reflip_pending = {}
 
         self.display_scale = 0.5
@@ -203,6 +205,7 @@ class BoxDetectNode(Node):
         # id 해제 -> need_flip=False 기준
         if not target_box['need_flip']:
             release_id(self.tracked_ids, plan['idx'])
+            self.accum_vis.pop(plan['idx'], None)  # id 해제 -> 누적 박스 시각화도 제거
             self.rotate_inplace_needed.pop(plan['idx'], None)
             self.reflip_pending.pop(plan['idx'], None)
             self.get_logger().info(f"idx={plan['idx']} need_flip=0 - id 즉시 해제")
@@ -243,6 +246,7 @@ class BoxDetectNode(Node):
 
         # 이 keep_pick_pose 발행이 이 idx에 대한 vision 쪽 마지막 개입이므로 바로 id 해제
         release_id(self.tracked_ids, idx)
+        self.accum_vis.pop(idx, None)  # id 해제 -> 누적 박스 시각화도 제거
         self.rotate_inplace_needed.pop(idx, None)
         self.reflip_pending.pop(idx, None)
         self.get_logger().info(f"idx={idx} keep 발행 완료 - id 즉시 해제")
@@ -289,6 +293,7 @@ class BoxDetectNode(Node):
         self.frame_in_window = 0 # 현재 윈도우에서 처리한 프레임 수
         self.box_sizes_sent = False # ready 받으면 리셋, 누적 리셋
         self.accum_result = {}  # 이전 턴 누적 결과(화면 표시용 포함) 정리
+        self.accum_vis = {}
         self.pick_target_vis = {}  # 이전 턴 pick_target 시각화 정리
         # box_ready 올 때마다 트래킹도 전부 리셋.
         self.tracked_ids = {}
@@ -299,7 +304,16 @@ class BoxDetectNode(Node):
         self.get_logger().info("box_ready 신호 받음 - 박스 크기 누적 재시작")
 
     def process_frame(self):
-        frame = self.capture.get_frame(detect=self.start) # 박스 대충위치 + sam2 마스크
+        # SAM2는 필요한 구간에서만 돌림
+        #  1) start 후 belt_stop 처음 보내기 전 (안정성 판단)
+        #  2) box_ready 후 box_sizes 보내기 전 (프레임 누적)
+        #  3) /flip_done 후 재측정 중
+        detect = self.start and (
+            not self.belt_stop_sent
+            or (self.box_ready and not self.box_sizes_sent)
+            or bool(self.reflip_pending)
+        )
+        frame = self.capture.get_frame(detect=detect) # 박스 대충위치 + sam2 마스크
         if frame is None:
             return False  # 스트림 끝(bag 재생 종료 등)
 
@@ -308,6 +322,15 @@ class BoxDetectNode(Node):
             return True  # 깨진 프레임 - 계속 진행
 
         if valid is None or not np.any(valid):
+            self._show(color_img)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                return False
+            return True
+
+        # SAM2 꺼진 프레임: belt_stop/ID/누적 로직은 건너뛰고 화면만 표시
+        # (빈 candidates로 로직 타면 stable_buf 초기화 -> belt_stop이 False로 뒤집힘)
+        if not detect:
+            self._draw_overlay(color_img, count=0, stable_count=None, detected_ids=None)
             self._show(color_img)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 return False
@@ -408,7 +431,7 @@ class BoxDetectNode(Node):
                 self.accum_buf[box_id].append((
                     self.global_frame,rw,rh, det['z_cm'], det['fill_ratio'],
                     det['angle_deg'], det['center_x_cm'], det['center_y_cm'], det['center_z_cm'],
-                    det.get('plane_fit')
+                    det.get('plane_fit'), det['rect_px']
                 ))
             self.frame_in_window += 1
 
@@ -422,7 +445,7 @@ class BoxDetectNode(Node):
             self.reflip_pending[box_id].append((
                 self.global_frame, det['real_w'], det['real_h'], det['z_cm'], det['fill_ratio'],
                 det['angle_deg'], det['center_x_cm'], det['center_y_cm'], det['center_z_cm'],
-                det.get('plane_fit')
+                det.get('plane_fit'), det['rect_px']
             ))
 
             if len(self.reflip_pending[box_id]) >= REFLIP_FRAMES:
@@ -434,6 +457,17 @@ class BoxDetectNode(Node):
                 r_avg_cx = float(np.mean([e[6] for e in top_entries]))
                 r_avg_cy = float(np.mean([e[7] for e in top_entries]))
                 r_avg_cz = float(np.mean([e[8] for e in top_entries]))
+
+                # 화면 표시용 - 2차 재측정 결과(1등 프레임 OBB + 평균값)로 누적 박스 시각화 덮어씀
+                self.accum_vis[box_id] = {
+                    'rect_px': top_entries[0][10],
+                    'w': float(np.mean([max(e[1], e[2]) for e in top_entries])),
+                    'h': float(np.mean([min(e[1], e[2]) for e in top_entries])),
+                    'z': float(np.mean([e[3] for e in top_entries])),
+                    'angle': r_avg_angle,
+                    'reflip': True,
+                    'expire': time.monotonic() + REFLIP_VIS_SEC,  # 3초 표시 후 자동 삭제
+                }
 
                 rotate_inplace = self.rotate_inplace_needed.get(box_id, False)
                 angle2 = pick_comm.compute_second_angle(r_avg_angle, rotate_inplace)
@@ -461,6 +495,7 @@ class BoxDetectNode(Node):
                 # 2차 pick_target 발행이 이 idx에 대한 vision 쪽 마지막 개입이므로
                 # /control/place_done을 기다리지 않고 바로 id 해제.
                 release_id(self.tracked_ids, box_id)
+                # accum_vis는 여기서 안 지움 - 2차 결과를 REFLIP_VIS_SEC 동안 표시 후 _draw_overlay에서 삭제
                 self.rotate_inplace_needed.pop(box_id, None)
                 self.get_logger().info(f"idx={box_id} 2차 발행 완료 - id 즉시 해제")
 
@@ -471,6 +506,7 @@ class BoxDetectNode(Node):
             # 지금 이 사이클이 box_ready로 시작된, 아직 발행 전인 사이클이면 -> 이번에 발행까지 함.
             should_send = self.box_ready and not self.box_sizes_sent
             self.accum_result = {}
+            self.accum_vis = {}
             box_size_entries = []
             for box_id, entries in self.accum_buf.items():
                 if len(entries) == 0:
@@ -488,6 +524,11 @@ class BoxDetectNode(Node):
                 avg_cy = float(np.mean([e[7] for e in top_entries]))
                 avg_cz = float(np.mean([e[8] for e in top_entries]))
                 self.accum_result[box_id] = (avg_w, avg_h, avg_z, avg_angle, avg_cx, avg_cy, avg_cz, top_entries)
+                self.accum_vis[box_id] = {  # fill_ratio 1등 프레임 OBB + 누적 평균값
+                    'rect_px': top_entries[0][10],
+                    'w': avg_w, 'h': avg_h, 'z': avg_z, 'angle': avg_angle,
+                    'reflip': False, 'expire': None,
+                }
                 # print(f"[ACCUM] Box{box_id}: w={avg_w:.1f} h={avg_h:.1f} z={avg_z:.1f} cm "
                 #       f"angle={avg_angle:.1f} deg "
                 #       f"center(cam)=({avg_cx:.1f}, {avg_cy:.1f}, {avg_cz:.1f}) cm "
@@ -511,6 +552,27 @@ class BoxDetectNode(Node):
             self.accum_buf = defaultdict(list)
             self.frame_in_window = 0
 
+        self._draw_overlay(color_img, count, stable_count, detected_ids)
+
+        # 경계 인식 디버깅용
+        # - 하늘색: SAM2 경계 근처에서 jump 테스트(진짜 실루엣)는 통과했지만 아직 clean_mask에
+        #           채택은 안 된 후보 (newly_added 조건 등으로 걸러진 것들)
+        # - 노란색: 실제로 clean_mask에 추가된 실루엣 픽셀
+        silhouette_vis = np.zeros_like(color_img)
+        silhouette_vis[sil_candidate_vis] = (0, 255, 0)  # 하늘색(BGR)
+        silhouette_vis[sil_used_vis] = (0, 0, 0)  # 검정
+        color_img = cv2.addWeighted(color_img, 1.0, silhouette_vis, 0.4, 0)  # 실루엣 시각화
+
+        self._show(color_img)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            return False
+        return True
+
+    # --------------------------------------------------------------
+    # 시각화 (누적 결과 / id / pick_target / STOP / 상태줄 / ROI)
+    # detected_ids=None, stable_count=None 이면 SAM2 꺼진 프레임
+    # --------------------------------------------------------------
+    def _draw_overlay(self, color_img, count, stable_count, detected_ids):
         # ---- 좌측 하단에 누적 결과 표시 (id 기준) ----
         if self.accum_result:
             line_h = 20   # 줄 간격(px)
@@ -543,12 +605,31 @@ class BoxDetectNode(Node):
         # ---- 화면에 현재 트래킹 중인 id 표시 (디버깅용) ----
         # 위치는 seed 시점 고정값이라, 실제 박스가 살짝 움직였어도 표시 위치는 그대로임(의도된 동작).
         for box_id, pos in self.tracked_ids.items():
-            seen = box_id in detected_ids
-            color = (0, 255, 0) if seen else (0, 0, 255)  # 이번 프레임에 안 보이면 빨간색
+            if detected_ids is None:
+                color = (160, 160, 160)  # SAM2 꺼짐 - 검출 안 했으므로 회색
+            else:
+                seen = box_id in detected_ids
+                color = (0, 255, 0) if seen else (0, 0, 255)  # 이번 프레임에 안 보이면 빨간색
             cv2.putText(color_img, f"id{box_id}", (int(pos['cx']) - 15, int(pos['cy']) - 20),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-        # ---- /vision/pick_target으로 실제 발행된 최종 중앙점 표시 (마젠타, 새로 발행될 때마다 갱신) ----
+        # ---- box_sizes 발행 후: 누적 결과 박스(1등 프레임 OBB + 누적 평균값) 시각화 ----
+        if self.box_sizes_sent:
+            now = time.monotonic()
+            for box_id, v in list(self.accum_vis.items()):
+                if v['expire'] is not None and now > v['expire']:
+                    del self.accum_vis[box_id]
+                    continue
+                rect_px = v['rect_px']
+                box_px = np.int32(cv2.boxPoints(rect_px))
+                cv2.drawContours(color_img, [box_px], 0, (0, 0, 200), 2)
+                tag = "(2nd)" if v['reflip'] else ""
+                cv2.putText(color_img,
+                            f"id{box_id}{tag} ",
+                            (int(rect_px[0][0]), int(rect_px[0][1]) - 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+        # ---- /vision/pick_target으로 실제 발행된 최종 중앙점 표시 (새로 발행될 때마다 갱신) ----
         for vis in self.pick_target_vis.values():
             cv2.circle(color_img, vis['target_point'], 6, (255, 0, 255), -1)
 
@@ -559,26 +640,15 @@ class BoxDetectNode(Node):
 
         # print(' ')
 
+        sam2_str = "OFF" if stable_count is None else "ON"
+        stable_str = "-" if stable_count is None else stable_count
         cv2.putText(color_img,
-                    f"Boxes: {count}  fr:{self.global_frame}  win:{self.frame_in_window}/{ACCUM_FRAMES}"
-                    f"  stable:{stable_count}/{MAX_BOXES}  tracked:{list(self.tracked_ids.keys())}",
+                    f"SAM2:{sam2_str}  Boxes: {count}  fr:{self.global_frame}  win:{self.frame_in_window}/{ACCUM_FRAMES}"
+                    f"  stable:{stable_str}/{MAX_BOXES}  tracked:{list(self.tracked_ids.keys())}",
                     (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
         cv2.rectangle(color_img, (self.capture.x0, self.capture.y0),
                       (self.capture.x1 - 1, self.capture.y1 - 1), (255, 0, 0), 1)
 
-        # 경계 인식 디버깅용
-        # - 하늘색: SAM2 경계 근처에서 jump 테스트(진짜 실루엣)는 통과했지만 아직 clean_mask에
-        #           채택은 안 된 후보 (newly_added 조건 등으로 걸러진 것들)
-        # - 노란색: 실제로 clean_mask에 추가된 실루엣 픽셀
-        silhouette_vis = np.zeros_like(color_img)
-        silhouette_vis[sil_candidate_vis] = (0, 255, 0)  # 하늘색(BGR)
-        silhouette_vis[sil_used_vis] = (0, 0, 0)  # 검정
-        color_img = cv2.addWeighted(color_img, 1.0, silhouette_vis, 0.4, 0)  # 실루엣 시각화
-
-        self._show(color_img)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            return False
-        return True
 
     def _show(self, color_img):
         """전체 해상도로 그린 결과를 화면 표시용으로만 축소해서 보여줌 (INTER_AREA로 깔끔하게)."""

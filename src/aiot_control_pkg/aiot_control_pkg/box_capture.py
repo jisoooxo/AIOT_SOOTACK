@@ -35,7 +35,7 @@ HW_RESET_ON_START = False    # False로 하면 리셋 안하고 이전 설정 �
 
 # ---- 실행 모드 ----
 MODE = "real"  # "real" or "bag"
-BAG_PATH = "/home/leejunmi/realsense_bag/0919(5).db3"
+BAG_PATH = "/home/leejunmi/realsense_bag/0919(3).db3"
 
 DEPTH_SENSOR_OPTIONS = {
     rs.option.enable_auto_exposure: 1,     # 1(켜기)

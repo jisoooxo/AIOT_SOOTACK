@@ -373,6 +373,7 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
         'center_x_cm': center_x_cm, 'center_y_cm': center_y_cm,
         'center_z_cm': center_z_cm,
         'plane_fit': plane_fit,
+        'rect_px': rect_px,  # 픽셀 OBB ((cx,cy),(w,h),angle) - 누적 후 화면 표시용
     }
 
 
