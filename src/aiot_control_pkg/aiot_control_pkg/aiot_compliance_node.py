@@ -34,6 +34,7 @@ FLIP_RISE_STEPS = 6
 HOME_Q = np.zeros(DOF, dtype=float)
 CONTROL_READY = np.deg2rad([0.0, -90.0, 0.0, 113.0, 67.0, 0.0])
 
+PLACE_READY = np.array([-0.15, -0.16, 0.10], dtype=float)
 KEEP_PLACE_POSITIONS = [
     np.array([ 0.08, 0.30, 0.16], dtype=float),
     np.array([-0.08, 0.30, 0.16], dtype=float),
@@ -63,6 +64,7 @@ STATE_WAIT_FLIP13_ADAPTIVE = 'WAIT_FLIP13_ADAPTIVE'
 STATE_WAIT_FLIP13_COMPLIANCE_OFF = 'WAIT_FLIP13_COMPLIANCE_OFF'
 
 STATE_WAIT_PRE_PLACE_HOME = 'WAIT_PRE_PLACE_HOME'
+STATE_WAIT_PLACE_READY = 'WAIT_PLACE_READY'
 STATE_WAIT_HOME = 'WAIT_HOME'
 
 
@@ -300,6 +302,17 @@ class AIOTControlNode(Node):
 
     def start_place(self):
         self.start_topdown(self.place_position, self.place_yaw, 'PLACE')
+
+    def start_place_ready(self):
+        q_target = self.kinematics.solve_topdown_pose(
+            PLACE_READY,
+            self.current_q,
+            self.place_yaw
+        )
+        q_target[5] = self.current_q[5] ## control_ready로 가면서 정렬한 yaw 값 유지
+
+        self.state = STATE_WAIT_PLACE_READY
+        self.publish_joint_target(q_target)
 
     def start_keep_pick(self):
         self.publish_pneumatic(False)
@@ -644,13 +657,20 @@ class AIOTControlNode(Node):
                 msg = Int8()
                 msg.data = self.index
                 self.flip_done_pub.publish(msg)
+                self.reset_task()
+                return
 
             elif self.task == 'place':
-                self.publish_done(self.place_done_pub)
+                self.start_place_ready()
+                return
 
             elif self.task == 'keep_place':
                 self.publish_done(self.keep_done_pub)
+                self.reset_task()
+                return
 
+        if self.state == STATE_WAIT_PLACE_READY:
+            self.publish_done(self.place_done_pub)
             self.reset_task()
             return
 
