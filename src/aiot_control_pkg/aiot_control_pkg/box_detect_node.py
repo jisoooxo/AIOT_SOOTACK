@@ -107,7 +107,7 @@ class BoxDetectNode(Node):
         # ---- pub/sub ----
         self.create_subscription(Bool, '/main/vision_start', self.start_callback, 10) # 이거 오면 벨트스탑 보내기.
         self.start = False  # /main/vision_start 로 True 오기 전엔 검출 로직 안 돌림
-        self.belt_stop_pub = self.create_publisher(Bool, '/belt_stop', 10)  # 한번만 발행.
+        self.belt_stop_pub = self.create_publisher(Bool, '/vision/belt_stop', 10)  # 한번만 발행.
         self.create_subscription(Bool, '/main/box_ready', self.box_ready_callback, 10) # 이거 오면 누적시작 -> 무조건 다 reset 해야함
         self.box_sizes_pub = self.create_publisher(String, '/vision/box_sizes', 10) 
 

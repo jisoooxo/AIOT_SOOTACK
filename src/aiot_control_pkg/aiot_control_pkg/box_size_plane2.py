@@ -44,6 +44,10 @@ TOL_CAM_SIDE_MULT = 1.3
 BOX_CENTER_WIN_PX = 10  # (1차 z)박스 중앙 +-px 윈도우에서 z_center 산출
 REFINE_WIN_PX = 5      # (1차 z)OBB 3등분점, z_center 재측정 윈도우(px)
 
+# 바운딩박스 긴 변이 이 픽셀 이상이면 반으로 나눠서 1차 마스크 추출
+# 뺄거면 아주큰 값으로 
+R1_SPLIT_SIZE_PX = 300 # 999999999999999
+
 # ---- SAM2 경계 스냅 파라미터 (2차에서만 씀)
 # -> 일단 안하도록 함 ,.. ----
 DILATE_SNAP_PX = 40            # top_mask2의 실제 경계에서부터 이정도 px 안에 들어와야댐, 안되면 노란색으로 뜬다
@@ -81,6 +85,44 @@ def _select_tol(z_cm):
 
 
 # --------------------------------------------------------------
+# xs,ys(윗면 clean_mask 픽셀 좌표)의 OBB 긴 축 양끝(end_a,end_b)과, 그 축을 3등분한 지점의
+# depth(refine_z_by_zone), 그 평균(z_center_refined)을 계산. 박스 하나를 통째로 넣었을 때도,
+# 반으로 나눠 뽑은 두 결과의 xs,ys를 합친 경우에도 똑같이 쓸 수 있음.
+# --------------------------------------------------------------
+def _axis_zone_depths(xs, ys, depth_m, z_center_fallback):
+    H, W = depth_m.shape
+    rect_px = cv2.minAreaRect(np.column_stack((xs, ys)).astype(np.float32))
+    box_pts_f = np.int32(cv2.boxPoints(rect_px)).astype(np.float32)
+
+    # OBB 긴 축 양 끝점 (짧은 변들의 중점)
+    edge01 = np.linalg.norm(box_pts_f[0] - box_pts_f[1])
+    edge12 = np.linalg.norm(box_pts_f[1] - box_pts_f[2])
+    if edge01 < edge12:
+        end_a = (box_pts_f[0] + box_pts_f[1]) / 2.0
+        end_b = (box_pts_f[2] + box_pts_f[3]) / 2.0
+    else:
+        end_a = (box_pts_f[1] + box_pts_f[2]) / 2.0
+        end_b = (box_pts_f[3] + box_pts_f[0]) / 2.0
+
+    # 긴 축을 3구역([0,1/3],[1/3,2/3],[2/3,1])으로 나눈 뒤 각 구역 중심에서 depth 재측정 -> 구역별 기준 z
+    refine_z_by_zone = [None, None, None]
+    for zi, t in enumerate((1.0 / 6.0, 3.0 / 6.0, 5.0 / 6.0)):
+        pt = end_a + t * (end_b - end_a)
+        pcx, pcy = int(round(pt[0])), int(round(pt[1]))
+        ry0, ry1 = max(0, pcy - REFINE_WIN_PX), min(H, pcy + REFINE_WIN_PX + 1)
+        rx0, rx1 = max(0, pcx - REFINE_WIN_PX), min(W, pcx + REFINE_WIN_PX + 1)
+        r_patch = depth_m[ry0:ry1, rx0:rx1]
+        r_valid = r_patch[r_patch > 0]
+        if r_valid.size > 0:
+            refine_z_by_zone[zi] = float(np.median(r_valid))
+
+    present = [z for z in refine_z_by_zone if z is not None]
+    z_center_refined = float(np.mean(present)) if present else float(z_center_fallback)
+    refine_z_by_zone = [z if z is not None else z_center_refined for z in refine_z_by_zone]
+    return end_a, end_b, refine_z_by_zone, z_center_refined
+
+
+# --------------------------------------------------------------
 # 1차 (평면 피팅용) 윗면 추출: |depth - z_ref| <= tol 인 픽셀을 윗면으로 잡아
 # 조각 잇기로 정리한 clean_mask와 그 OBB, 그리고 OBB 긴 축을 3구역으로 나눈 뒤
 # 각 구역 중심(t=1/6, 1/2, 5/6)에서 잰 depth를 돌려준다.
@@ -89,8 +131,6 @@ def _extract_top_face_r1(seg_mask, depth_m, z_center, tol, overlay, color_img):
     """반환: dict 또는 None(검출 실패 -> 호출부에서 continue)
       xs, ys, end_a, end_b, refine_z_by_zone([z0,z1,z2], 없는 점은 유효값 평균으로 채움), z_center(3점 평균)
     """
-    H, W = depth_m.shape
-
     valid = seg_mask & (depth_m > 0)
     if not np.any(valid):
         return None
@@ -126,35 +166,7 @@ def _extract_top_face_r1(seg_mask, depth_m, z_center, tol, overlay, color_img):
     if len(xs) <= 5:
         return None
 
-    rect_px = cv2.minAreaRect(np.column_stack((xs, ys)).astype(np.float32))
-    box_px = np.int32(cv2.boxPoints(rect_px))
-
-    # OBB 긴 축 양 끝점 (짧은 변들의 중점)
-    box_pts_f = box_px.astype(np.float32)
-    edge01 = np.linalg.norm(box_pts_f[0] - box_pts_f[1])
-    edge12 = np.linalg.norm(box_pts_f[1] - box_pts_f[2])
-    if edge01 < edge12:
-        end_a = (box_pts_f[0] + box_pts_f[1]) / 2.0
-        end_b = (box_pts_f[2] + box_pts_f[3]) / 2.0
-    else:
-        end_a = (box_pts_f[1] + box_pts_f[2]) / 2.0
-        end_b = (box_pts_f[3] + box_pts_f[0]) / 2.0
-
-    # 긴 축을 3구역([0,1/3],[1/3,2/3],[2/3,1])으로 나눈 뒤 각 구역 중심에서 depth 재측정 -> 구역별 기준 z
-    refine_z_by_zone = [None, None, None]
-    for zi, t in enumerate((1.0 / 6.0, 3.0 / 6.0, 5.0 / 6.0)):
-        pt = end_a + t * (end_b - end_a)
-        pcx, pcy = int(round(pt[0])), int(round(pt[1]))
-        ry0, ry1 = max(0, pcy - REFINE_WIN_PX), min(H, pcy + REFINE_WIN_PX + 1)
-        rx0, rx1 = max(0, pcx - REFINE_WIN_PX), min(W, pcx + REFINE_WIN_PX + 1)
-        r_patch = depth_m[ry0:ry1, rx0:rx1]
-        r_valid = r_patch[r_patch > 0]
-        if r_valid.size > 0:
-            refine_z_by_zone[zi] = float(np.median(r_valid))
-
-    present = [z for z in refine_z_by_zone if z is not None]
-    z_center_refined = float(np.mean(present)) if present else float(z_center)
-    refine_z_by_zone = [z if z is not None else z_center_refined for z in refine_z_by_zone]
+    end_a, end_b, refine_z_by_zone, z_center_refined = _axis_zone_depths(xs, ys, depth_m, z_center)
 
     return {
         'xs': xs, 'ys': ys,
@@ -204,10 +216,57 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
     tol1 = max(TOL_R1_MIN_M, tol - TOL_R1_TIGHTEN_M)  # 1차는 더 타이트하게(평면 피팅 재료 오염 방지)
 
     # ---- 1차: 박스 전체를 단일 기준 z(z_center)로 윗면/OBB 추출 (평면 피팅 재료 수집용) ----
-    r1 = _extract_top_face_r1(seg_mask, depth_m, z_center, tol1,
-                               overlay=overlay1, color_img=color_img)
-    if r1 is None:
+    # 박스가 크면(긴 축 길이 >= R1_SPLIT_SIZE_PX) 기울기 때문에 z_center 하나로는
+    # 1차 마스크가 잘 안 잡히므로, 반으로 나눠서 각자 z_center로 뽑은 뒤 합친다.
+    # 기준은 이미지축 바운딩박스가 아니라 seg_mask에 OBB를 씌운 실제 긴 축 길이(회전 무관).
+    ys_all, xs_all = np.where(seg_mask)
+    if ys_all.size == 0:
         return None
+    bbox_w = int(xs_all.max() - xs_all.min()) + 1
+    bbox_h = int(ys_all.max() - ys_all.min()) + 1
+    obb_rect = cv2.minAreaRect(np.column_stack((xs_all, ys_all)).astype(np.float32))
+    long_side = max(obb_rect[1])
+
+    if long_side >= R1_SPLIT_SIZE_PX:
+        if color_img is not None:
+            cv2.putText(color_img, f"R1 SPLIT (long={long_side:.0f}px)", (int(xs_all.min()), max(20, int(ys_all.min()) - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)  # TEMP
+        if bbox_w >= bbox_h:
+            mid = (xs_all.min() + xs_all.max()) / 2.0
+            halves = (xs_all < mid, xs_all >= mid)
+        else:
+            mid = (ys_all.min() + ys_all.max()) / 2.0
+            halves = (ys_all < mid, ys_all >= mid)
+
+        r1_list = []
+        for half in halves:
+            hx, hy = xs_all[half], ys_all[half]
+            hz_valid = depth_m[hy, hx]
+            hz_valid = hz_valid[hz_valid > 0]
+            if hx.size == 0 or hz_valid.size == 0:
+                continue
+            half_mask = np.zeros_like(seg_mask)
+            half_mask[hy, hx] = True
+            r1_half = _extract_top_face_r1(half_mask, depth_m, float(np.median(hz_valid)), tol1,
+                                            overlay=overlay1, color_img=color_img)
+            if r1_half is not None:
+                r1_list.append(r1_half)
+
+        if len(r1_list) == 0:
+            return None
+        elif len(r1_list) == 1:
+            r1 = r1_list[0]
+        else:
+            xs_m = np.concatenate([r['xs'] for r in r1_list])
+            ys_m = np.concatenate([r['ys'] for r in r1_list])
+            end_a, end_b, refine_z_by_zone, z_center_refined = _axis_zone_depths(
+                xs_m, ys_m, depth_m, z_center)
+            r1 = {'xs': xs_m, 'ys': ys_m, 'end_a': end_a, 'end_b': end_b,
+                  'refine_z_by_zone': refine_z_by_zone, 'z_center': z_center_refined}
+    else:
+        r1 = _extract_top_face_r1(seg_mask, depth_m, z_center, tol1,
+                                   overlay=overlay1, color_img=color_img)
+        if r1 is None:
+            return None
 
     # ---- 1차 top 픽셀에 평면(depth ~= c0 + c1*x + c2*y)을 맞춰 픽셀별 기준 z 맵 생성 ----
     z_ref_map = None
