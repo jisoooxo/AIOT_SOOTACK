@@ -16,7 +16,7 @@ from aiot_control_pkg.kinematics_aiot import AIOTKinematics, wrap_to_pi
 # 박스 잡기 범위
 # pick_Z_MIN = 0.035
 # pick_Z_MAX = 0.155
-# height -> 0.02 ~ 0.08
+# height -> 0.03 ~ 0.08
 
 DOF = 6
 
@@ -34,10 +34,10 @@ FLIP_RISE_STEPS = 6
 HOME_Q = np.zeros(DOF, dtype=float)
 CONTROL_READY = np.deg2rad([0.0, -90.0, 0.0, 113.0, 67.0, 0.0])
 
-PLACE_READY = np.array([-0.15, -0.16, 0.10], dtype=float)
+PLACE_LIFT_Z_OFFSET = 0.25
 KEEP_PLACE_POSITIONS = [
-    np.array([ 0.08, 0.30, 0.16], dtype=float),
-    np.array([-0.08, 0.30, 0.16], dtype=float),
+    np.array([ 0.08, 0.25, 0.16], dtype=float),
+    np.array([-0.08, 0.25, 0.16], dtype=float),
 ]
 
 STATE_IDLE = 'IDLE'
@@ -64,7 +64,6 @@ STATE_WAIT_FLIP13_ADAPTIVE = 'WAIT_FLIP13_ADAPTIVE'
 STATE_WAIT_FLIP13_COMPLIANCE_OFF = 'WAIT_FLIP13_COMPLIANCE_OFF'
 
 STATE_WAIT_PRE_PLACE_HOME = 'WAIT_PRE_PLACE_HOME'
-STATE_WAIT_PLACE_READY = 'WAIT_PLACE_READY'
 STATE_WAIT_HOME = 'WAIT_HOME'
 
 
@@ -139,7 +138,7 @@ class AIOTControlNode(Node):
 
         position, yaw, self.index, self.height, self.need_flip = result
 
-        self.height = max(self.height, 0.02)
+        self.height = max(self.height, 0.03)
 
         raw_msg = String()
         raw_msg.data = json.dumps({
@@ -230,7 +229,7 @@ class AIOTControlNode(Node):
             self.start_pick()
         elif self.task == 'place':
             approach = self.place_position.copy()
-            approach[2] += 0.1
+            approach[2] += PLACE_LIFT_Z_OFFSET
 
             target_yaw = wrap_to_pi(math.radians(180.0))
 
@@ -303,17 +302,6 @@ class AIOTControlNode(Node):
     def start_place(self):
         self.start_topdown(self.place_position, self.place_yaw, 'PLACE')
 
-    def start_place_ready(self):
-        q_target = self.kinematics.solve_topdown_pose(
-            PLACE_READY,
-            self.current_q,
-            self.place_yaw
-        )
-        q_target[5] = self.current_q[5] ## control_ready로 가면서 정렬한 yaw 값 유지
-
-        self.state = STATE_WAIT_PLACE_READY
-        self.publish_joint_target(q_target)
-
     def start_keep_pick(self):
         self.publish_pneumatic(False)
         self.start_topdown(self.keep_position, self.keep_yaw, 'KEEP PICK')
@@ -333,7 +321,10 @@ class AIOTControlNode(Node):
 
     def solve_topdown_path(self, position, previous_q, yaw, name):
         approach = position.copy()
-        approach[2] += 0.1  # 0.07 -> 기존 lift 위치
+
+        if self.task == 'place':
+            approach[2] += PLACE_LIFT_Z_OFFSET
+        else: approach[2] += 0.1  # 0.07 -> 기존 lift 위치
 
         try:
             target_yaw = yaw
@@ -377,14 +368,9 @@ class AIOTControlNode(Node):
                 q_target[5] = previous_q[5]
 
             q_lift_1 = q_approach.copy()
-
             q_lift_2 = q_lift_1.copy()
 
-            if (
-                self.task == 'pick'
-                and self.need_flip
-                and self.index in (1, 2, 3)
-            ):
+            if self.task == 'pick' and self.need_flip and self.index in (1, 2, 3):
                 q_lift_2[5] = math.radians(0.0)
 
             return q_approach, q_target, q_lift_1, q_lift_2
@@ -414,11 +400,11 @@ class AIOTControlNode(Node):
         self.publish_joint_target(self.target_q)
 
     def flip_q2_offset_deg(self, height):
-        height = float(np.clip(height, 0.02, 0.08))
+        height = float(np.clip(height, 0.03, 0.08))
         return 5.0 if height <= 0.076 else 3.0
 
     def flip_q3_offset_deg(self, height):
-        height = float(np.clip(height, 0.02, 0.08))
+        height = float(np.clip(height, 0.03, 0.08))
 
         if height <= 0.03:
             return 13.0
@@ -506,7 +492,7 @@ class AIOTControlNode(Node):
         adaptive_position = np.array([
             place_x,
             self.pick_position[1],
-            self.height - 0.002 ##### compliance 제어를 하면서 내려가는 높이 #####
+            self.height - 0.001 ##### compliance 제어를 하면서 내려가는 높이 #####
         ], dtype=float)
 
         q_adaptive = self.kinematics.solve_parallel_pose(adaptive_position, self.current_q)
@@ -653,26 +639,24 @@ class AIOTControlNode(Node):
             return
 
         if self.state == STATE_WAIT_HOME:
+
             if self.task == 'flip':
                 msg = Int8()
                 msg.data = self.index
                 self.flip_done_pub.publish(msg)
+
                 self.reset_task()
                 return
 
             elif self.task == 'place':
-                self.start_place_ready()
+                self.publish_done(self.place_done_pub)
+                self.reset_task()
                 return
 
             elif self.task == 'keep_place':
                 self.publish_done(self.keep_done_pub)
                 self.reset_task()
                 return
-
-        if self.state == STATE_WAIT_PLACE_READY:
-            self.publish_done(self.place_done_pub)
-            self.reset_task()
-            return
 
     def timer_callback(self):
         if self.action_deadline is None or time.monotonic() < self.action_deadline:
