@@ -8,7 +8,6 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool, Empty, Float64MultiArray, String, Int8
-
 from aiot_control_pkg.kinematics_aiot import AIOTKinematics, wrap_to_pi
 # topdown max xy = 0.415
 # X = 0.30 -> y = -0.275 ~ 0.275
@@ -30,11 +29,12 @@ FLIP_RETREAT_DISTANCE = 0.02
 FLIP_RETREAT_STEPS = 3
 FLIP_RISE_Z = 0.20
 FLIP_RISE_STEPS = 6
+PLACE_DOWN_STEPS = 6
 
 HOME_Q = np.zeros(DOF, dtype=float)
 CONTROL_READY = np.deg2rad([0.0, -90.0, 0.0, 113.0, 67.0, 0.0])
 
-PLACE_LIFT_Z_OFFSET = 0.25
+PLACE_LIFT_Z_OFFSET = 0.1
 KEEP_PLACE_POSITIONS = [
     np.array([ 0.08, 0.25, 0.16], dtype=float),
     np.array([-0.08, 0.25, 0.16], dtype=float),
@@ -229,7 +229,7 @@ class AIOTControlNode(Node):
             self.start_pick()
         elif self.task == 'place':
             approach = self.place_position.copy()
-            approach[2] += PLACE_LIFT_Z_OFFSET
+            approach[2] = PLACE_LIFT_Z_OFFSET
 
             target_yaw = wrap_to_pi(math.radians(180.0))
 
@@ -302,6 +302,44 @@ class AIOTControlNode(Node):
     def start_place(self):
         self.start_topdown(self.place_position, self.place_yaw, 'PLACE')
 
+    def solve_place_down_path(self):
+        start_position = self.place_position.copy()
+        start_position[2] = PLACE_LIFT_Z_OFFSET
+
+        target_position = self.place_position.copy()
+
+        waypoints = []
+        q_prev = self.current_q.copy()
+
+        target_yaw = wrap_to_pi(math.radians(180.0))
+
+        fixed_q6 = self.current_q[5]
+
+        for i in range(1, PLACE_DOWN_STEPS + 1):
+
+            ratio = i / PLACE_DOWN_STEPS
+
+            position = start_position.copy()
+
+            # x, y는 PLACE 위치 그대로 z만 lift -> place 방향으로 내려감
+            position[2] = (
+                start_position[2] + (target_position[2] - start_position[2]) * ratio
+            )
+
+            q = self.kinematics.solve_topdown_pose(
+                position,
+                q_prev,
+                target_yaw
+            )
+
+            # PLACE 도중 yaw 회전 방지
+            q[5] = fixed_q6
+
+            waypoints.append(q)
+            q_prev = q
+
+        return waypoints
+
     def start_keep_pick(self):
         self.publish_pneumatic(False)
         self.start_topdown(self.keep_position, self.keep_yaw, 'KEEP PICK')
@@ -323,7 +361,7 @@ class AIOTControlNode(Node):
         approach = position.copy()
 
         if self.task == 'place':
-            approach[2] += PLACE_LIFT_Z_OFFSET
+            approach[2] = PLACE_LIFT_Z_OFFSET
         else: approach[2] += 0.1  # 0.07 -> 기존 lift 위치
 
         try:
@@ -555,7 +593,15 @@ class AIOTControlNode(Node):
 
         if self.state == STATE_WAIT_APPROACH:
             self.state = STATE_WAIT_TARGET
-            self.publish_joint_target(self.target_q)
+            
+            if self.task == 'place':
+                waypoints = self.solve_place_down_path()
+                self.target_q = waypoints[-1].copy()
+                self.publish_joint_waypoints(waypoints)
+
+            else:
+                self.publish_joint_target(self.target_q)
+
             return
 
         if self.state == STATE_WAIT_TARGET:

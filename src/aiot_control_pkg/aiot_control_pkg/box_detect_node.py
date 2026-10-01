@@ -28,8 +28,8 @@ TOP_K_FRAMES = 2              # 상위 몇 프레임을 평균낼지 (fill_ratio
 REFLIP_FRAMES = 8            # /flip_done 이후 2차 재측정에 모을 프레임 수
 REFLIP_VIS_SEC = 3.0         # 2차 재측정 결과 박스 화면 표시 유지 시간(s)
 # ---- 컨베이어 정지 판단 ----
-STABLE_FRAMES    = 4          # 4frame 기준 판단
-STABLE_TOL_CM    = 1.0        # OBB 실측 w, h 각각의 허용 변화량 (cm)
+STABLE_FRAMES    = 3          # 4frame 기준 판단
+STABLE_TOL_CM    = 1.2        # OBB 실측 w, h 각각의 허용 변화량 (cm)
 MAX_BOXES        = 3          # 안정된 박스가 이 개수가 되면 belt_stop 발행
 
 # ----------------------------------------------------------------------

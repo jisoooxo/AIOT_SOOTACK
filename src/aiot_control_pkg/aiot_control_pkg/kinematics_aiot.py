@@ -14,8 +14,8 @@ DH_THETA_OFFSET = np.deg2rad([0.0, 0.0, 0.0, -90.0, 90.0])
 # 공압 그리퍼 끝은 6번 회전축 방향으로 이동
 Z_OFFSET = 0.16
 
-JOINT_MIN = np.deg2rad([-170.0, -120.0, -170.0, -150.0, -120.0, -360.0])
-JOINT_MAX = np.deg2rad([170.0, 120.0, 170.0, 150.0, 120.0, 360.0])
+JOINT_MIN = np.deg2rad([-170.0, -120.0, -120.0, -150.0, -120.0, -360.0])
+JOINT_MAX = np.deg2rad([170.0, 120.0, 120.0, 150.0, 120.0, 360.0])
 
 IK_POSITION_WEIGHT = 100.0
 IK_CONTINUITY_WEIGHT = 0.02
@@ -240,7 +240,7 @@ class AIOTKinematics:
                 position_error = transform[:3, 3] - position
                 axis_error = transform[:3, 2] - target_axis
                 joint_delta = (q[:5] - previous_q[:5] + np.pi) % (2.0 * np.pi) - np.pi
-                return np.concatenate([85.0 * position_error, 0.6 * axis_error, 0.01 * joint_delta])
+                return np.concatenate([70.0 * position_error, 0.6 * axis_error, 0.01 * joint_delta])
 
             result = least_squares(residual, seed, bounds=(JOINT_MIN[:5], JOINT_MAX[:5]), max_nfev=500)
 

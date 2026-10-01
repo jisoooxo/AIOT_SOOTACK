@@ -23,26 +23,36 @@ pc = "JISU"
 # 카메라/스트림 파라미터
 # ----------------------------------------------------------------------
 W, H, FPS = 1280, 720, 30
+# ROI_X_MIN, ROI_X_MAX = 250, 1280
+# ROI_Y_MIN, ROI_Y_MAX = 200,650#250, 650
 ROI_X_MIN, ROI_X_MAX = 250, 1280
-ROI_Y_MIN, ROI_Y_MAX = 200,650 #250, 650
+ROI_Y_MIN, ROI_Y_MAX = 250,630#250, 650
 resize = 2 # 1/2배로 축소시켜서 imshow 띄움
+
+# ROI_X_MIN, ROI_X_MAX = 250, 1280
+# ROI_Y_MIN, ROI_Y_MAX = 150, 450
 
 # 리얼센스 설정 리셋
 HW_RESET_ON_START = False    # False로 하면 리셋 안하고 이전 설정 그대로. 리셋하면 노출/화이트밸런스 초기화됨. 
 
 # ---- 실행 모드 ----
 MODE = "real"  # "real" or "bag"
-BAG_PATH = "/home/leejunmi/realsense_bag/0919(6).db3"
+BAG_PATH = "/home/leejunmi/realsense_bag/0919(5).db3"
 
 DEPTH_SENSOR_OPTIONS = {
     rs.option.enable_auto_exposure: 1,     # 1(켜기)
     # rs.option.exposure:             6000,   # us. 벨트 모션블러 줄이려면 낮게
     # rs.option.gain:                 16,
+    # 노출 1이 자동 켜진것, 아니면 흰 부분이 날라가서 노출을 못 줄임, IR 영상이 재대로 안 만들어짐(무늬가 없어서 댑스 못찾음)->댑스 0으로 측정.
+    # IR 패턴 프로잭터의 출력 정도(쏘는 무늬의 밝기), 높높으면 밝은 부분 날라갈수도
     rs.option.laser_power:  160,        #360.0,  # 최대 근처 (범위 밖이면 클램프)
     rs.option.emitter_enabled:      1,
     # emitter: IR 프로잭터를 켜나 끄냐(주변광 IR 즉 햇빛 의존, 실내:on필수)
+    # rs.option.depth_units:        0.0001, # 필요 시. 코드가 get_depth_scale()로 자동 반영
 }
 COLOR_SENSOR_OPTIONS = {
+    # RGB(SAM2 입력)는 자동 노출/화이트밸런스 유지. SAM2는 노출 변화에 둔감하고,
+    # 수동값을 잘못 넣으면 화면 색만 이상해짐. 재현성은 depth만 고정하면 충분.
     rs.option.enable_auto_exposure:      1,
     rs.option.enable_auto_white_balance: 1,
 }
@@ -55,7 +65,7 @@ FLOOR_M = 0.531 #0.527 -> 0.004m
 (height > H_MIN_M) & (height < H_MAX_M) & valid → 1cm~20cm 사이 높이인 픽셀만 1차 마스크
 MORPH_OPEN (작은 노이즈 점 제거) → MORPH_CLOSE (작은 구멍 메꾸기), 커널은 둘 다 MORPH_KERNEL=10'''
 # ----------------------------------------------------------------------
-H_MIN_M      = 0.02    # 바닥으로부터 1cm 이상 올라온 물체만
+H_MIN_M      = 0.025    # 바닥으로부터 1cm 이상 올라온 물체만
 H_MAX_M      = 0.2      # 20cm 이상은 무시
 MIN_AREA_CM2 = 8.0      # 너무 작은 물체는 제거(높이 컴포넌트 기준)
 MORPH_KERNEL = 10        # 모폴로지 커널
