@@ -338,26 +338,18 @@ class BoxDetectNode(Node):
 
         floor_m = self.capture.floor_m
 
-        # 디버그 시각화용 누적 마스크(경계용)
-        sil_used_vis = np.zeros(depth_m.shape, dtype=bool)
-        sil_candidate_vis = np.zeros(depth_m.shape, dtype=bool)
-        jump_used_area_vis = np.zeros(depth_m.shape, dtype=bool)
-        drop_vis_accum = np.zeros(depth_m.shape, dtype=np.float32)
-
         count = 0
         # 이 프레임에서 나온 박스들: id 배정 전 임시 dict로 저장
         frame_dets = []
 
         if candidates: # box_capture 결과
             overlay = color_img.copy()
-            dbg = {'jump': jump_used_area_vis, 'sil_cand': sil_candidate_vis,
-                   'drop': drop_vis_accum, 'sil_used': sil_used_vis}
             for idx, cand in enumerate(candidates):
                 det = compute_box_size( # 정밀 사이즈 체크
                     cand['seg_mask'], depth_m, floor_m,
                     self.capture.fx, self.capture.fy, self.capture.cx, self.capture.cy,
                     cand['bcx'], cand['bcy'],
-                    overlay=overlay, color_img=color_img, dbg=dbg, label=f"Box {idx+1}")
+                    overlay=overlay, color_img=color_img, label=f"Box {idx+1}")
                 if det is not None:
                     count += 1
                     frame_dets.append(det) # 하나씩 저장
@@ -553,15 +545,6 @@ class BoxDetectNode(Node):
             self.frame_in_window = 0
 
         self._draw_overlay(color_img, count, stable_count, detected_ids)
-
-        # 경계 인식 디버깅용
-        # - 하늘색: SAM2 경계 근처에서 jump 테스트(진짜 실루엣)는 통과했지만 아직 clean_mask에
-        #           채택은 안 된 후보 (newly_added 조건 등으로 걸러진 것들)
-        # - 노란색: 실제로 clean_mask에 추가된 실루엣 픽셀
-        silhouette_vis = np.zeros_like(color_img)
-        silhouette_vis[sil_candidate_vis] = (0, 255, 0)  # 하늘색(BGR)
-        silhouette_vis[sil_used_vis] = (0, 0, 0)  # 검정
-        color_img = cv2.addWeighted(color_img, 1.0, silhouette_vis, 0.4, 0)  # 실루엣 시각화
 
         self._show(color_img)
         if cv2.waitKey(1) & 0xFF == ord('q'):

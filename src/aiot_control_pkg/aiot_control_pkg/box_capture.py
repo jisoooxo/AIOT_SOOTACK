@@ -5,7 +5,6 @@ RealSense 캡처 + 필터
 수정: 박스 살짝 붙어있는 경우 한 박스로 되던거 수정 
 """
 
-from curses.ascii import FF
 import time
 
 import cv2
@@ -25,7 +24,7 @@ pc = "JISU"
 W, H, FPS = 1280, 720, 30
 # ROI_X_MIN, ROI_X_MAX = 250, 1280
 # ROI_Y_MIN, ROI_Y_MAX = 200,650 #250, 650
-ROI_X_MIN, ROI_X_MAX = 250, 1280
+ROI_X_MIN, ROI_X_MAX = 250, 1280 # 벨트 기준 ROI
 ROI_Y_MIN, ROI_Y_MAX = 250,630
 resize = 2 # 1/2배로 축소시켜서 imshow 띄움
 
@@ -34,7 +33,7 @@ HW_RESET_ON_START = False    # False로 하면 리셋 안하고 이전 설정 �
 
 # ---- 실행 모드 ----
 MODE = "real"  # "real" or "bag"
-BAG_PATH = "/home/leejunmi/realsense_bag/0919(1).db3"
+BAG_PATH = "/home/leejunmi/realsense_bag/0919(2).db3"
 
 DEPTH_SENSOR_OPTIONS = {
     rs.option.enable_auto_exposure: 1,     # 1(켜기)
@@ -103,7 +102,7 @@ def _obb_fill_ratio(binary_mask):
 
 
 def _half_point(xs, ys, seg_mask):
-    """반쪽 픽셀(xs, ys)의 평균 좌표를 point 프롬프트 위치로 씀. 마스크(mask) 밖이면 가장 가까운 픽셀로 옮김."""
+    """반쪽 픽셀(xs, ys)의 평균 좌표를 point 프롬프트 위치로 씀. 마스크 밖이면 가장 가까운 픽셀로 옮김."""
     cx, cy = float(xs.mean()), float(ys.mean())
     px, py = int(round(cx)), int(round(cy))
     if seg_mask[py, px]:
@@ -159,9 +158,6 @@ class BoxCapture:
             raise ValueError(f"알 수 없는 mode: {mode}")
 
         self.depth_scale = depth_sensor.get_depth_scale()
-
-        # ---- 시작 시점 센서 온도 출력 (열 안정화 확인용) ----
-        # 콜드 스타트 직후엔 이 값이 계속 오르고, 그동안 depth가 mm 단위로 드리프트함.
         try:
             self.pipeline.wait_for_frames()   # 온도 레지스터가 채워지도록 첫 프레임 한 장 받기
         except Exception:
@@ -206,9 +202,7 @@ class BoxCapture:
 
 
     def _point_mask(self, pt, other_pt, region):
-        """pt에 positive point 프롬프트를 줘서 나온 후보 3개 중 하나를 고름(region 박스 밖은 버림).
-        반대쪽 점(other_pt)을 포함하지 않는 후보를 우선(=다른 박스를 삼키지 않은 것), 그중 사각형다운
-        (fill_ratio 높은) 큰 것. 그런 후보가 없으면(=박스 하나) 전체 후보에서 같은 기준으로 고름."""
+        """pt에 positive point 프롬프트를 줘서 나온 후보 3개 중 하나를 고름"""
         pt_masks, _, _ = self.predictor.predict(
             point_coords=np.array([pt]), point_labels=np.array([1]), multimask_output=True)
         ex0, ey0, ex1, ey1 = region
@@ -229,7 +223,7 @@ class BoxCapture:
     # --------------------------------------------------------------
     def get_frame(self, detect=True):
         """
-        candidates 원소: {'seg_mask': bool(H,W) SAM2 마스크, 'bcx': int, 'bcy': int(컴포넌트 중심 픽셀)}
+        candidates: {'seg_mask': bool(H,W) SAM2 마스크, 'bcx': int, 'bcy': int(컴포넌트 중심 픽셀)}
         """
         try:
             frames = self.pipeline.wait_for_frames()

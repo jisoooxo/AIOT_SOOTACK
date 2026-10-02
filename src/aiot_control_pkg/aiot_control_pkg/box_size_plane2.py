@@ -6,13 +6,7 @@ TOL은 1차 판정용 빡세게 따로 + 2차 널널하게 따로
 """
 
 
-"""
-박스 사이즈 
-폼클랜징 16 6.6 4.7
-솜 13 6.5 5.4
-초록색 15 5.1 3.5
-
-"""
+# 1002: 발행점 z 중앙값만 사용하도록 수정, z 보정 추가 
 
 
 import cv2
@@ -48,26 +42,18 @@ REFINE_WIN_PX = 5      # (1차 z)OBB 3등분점, z_center 재측정 윈도우(px
 # 뺄거면 아주큰 값으로 
 R1_SPLIT_SIZE_PX = 300 # 999999999999999
 
-# ---- SAM2 경계 스냅 파라미터 (2차에서만 씀)
-# -> 일단 안하도록 함 ,.. ----
-DILATE_SNAP_PX = 40            # top_mask2의 실제 경계에서부터 이정도 px 안에 들어와야댐, 안되면 노란색으로 뜬다
-
-# ---- 바닥-윗면 경계(실루엣) 판정 (2차에서만 씀) ----
-EDGE_COMPARE_PX = 3            # 경계 바로 안쪽/바깥쪽 비교 폭(px)
-SILHOUETTE_HEIGHT_TOL_RATIO = 0.000000000000001 #0.15     # 박스 높이의 이 비율만큼을 허용 오차로 씀
-SILHOUETTE_HEIGHT_TOL_MIN_M = 0.000000000000001 #0.0015  # 허용 오차 하한(1.5mm)
-
-SILHOUETTE_Z_TOL_MULT = 5   # 실루엣 후보도 z_ref(윗면 기준 depth)에서 이 배수(*tol)까지 허용
-
 # ---- OBB 실측 크기 필터 ----
 MIN_AREA_OBB_CM2 = 10.0       # OBB 실측 면적 기준
 
-orientation_axis = 'long' 
+# ---- 좌우 위치별 z(depth) 보정 ----
+Z_CORR_REF_U   = 640    # 보정 0인 픽셀 x (z가 제일 정확한 위치)
+Z_CORR_LEFT_U  = 180    # 왼쪽 측정 픽셀 x
+Z_CORR_LEFT_M  = 0 #-0.0015    # 왼쪽에서 depth에 더할 값(m)
+Z_CORR_RIGHT_U = 1100   # 오른쪽 측정 픽셀 x
+Z_CORR_RIGHT_M = 0 #+0.0015    # 오른쪽에서 depth에 더할 값(m)
+# 639 기준으로, 오른쪽은 높이가 0.15 크게 잡힘 -> depth가 작게 잡히니까 +0.015
 
-_SNAP_KERNEL = cv2.getStructuringElement(
-    cv2.MORPH_ELLIPSE, (2 * DILATE_SNAP_PX + 1, 2 * DILATE_SNAP_PX + 1))
-_EDGE_KERNEL = cv2.getStructuringElement(
-    cv2.MORPH_ELLIPSE, (2 * EDGE_COMPARE_PX + 1, 2 * EDGE_COMPARE_PX + 1))
+orientation_axis = 'long'
 
 
 def _select_tol(z_cm):
@@ -176,10 +162,10 @@ def _extract_top_face_r1(seg_mask, depth_m, z_center, tol, overlay, color_img):
 
 
 def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
-                       overlay=None, overlay1=None, color_img=None, dbg=None, label=""):
+                       overlay=None, overlay1=None, color_img=None, label=""):
     """SAM2 seg_mask 하나 + 이 프레임의 depth_m으로 박스 하나의 실측 크기를 계산.
 
-    box_size_plane.py와 다르게, 평면 피팅(z_ref_map) 후의 dz<=tol 테스트 + 실루엣 스냅까지만 하고
+    box_size_plane.py와 다르게, 평면 피팅(z_ref_map) 후의 dz<=tol 테스트까지만 하고
     closing/dilate-open/침식은 생략한 채로 그대로 최종 결과로 씀.
 
     seg_mask   : bool (H,W), SAM2가 뽑은 이 박스의 마스크
@@ -189,8 +175,6 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
     bcx,bcy    : 대충 잡은 컴포넌트 중심 픽셀좌표 (1차 z_center 산출 시작점)
     overlay/color_img: 디버그 시각화용(선택). None이면 그림 안 그림.
     overlay1   : 1차(r1, 단일 z_center 기준) 결과만 따로 보고 싶을 때 넘기는 별도 캔버스.
-    dbg        : {'jump','sil_cand','drop','sil_used'} 누적 마스크(선택). 2차 실루엣 스냅 후보/채택
-                 결과를 여기에 누적해줌 - box_detect_new.py의 하늘색/노란색 시각화용.
     label      : 로그에 붙일 표시자, 예: "Box 1"
 
     반환: dict(cx, cy, real_w, real_h, z_cm, fill_ratio, angle_deg,
@@ -216,9 +200,7 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
     tol1 = max(TOL_R1_MIN_M, tol - TOL_R1_TIGHTEN_M)  # 1차는 더 타이트하게(평면 피팅 재료 오염 방지)
 
     # ---- 1차: 박스 전체를 단일 기준 z(z_center)로 윗면/OBB 추출 (평면 피팅 재료 수집용) ----
-    # 박스가 크면(긴 축 길이 >= R1_SPLIT_SIZE_PX) 기울기 때문에 z_center 하나로는
-    # 1차 마스크가 잘 안 잡히므로, 반으로 나눠서 각자 z_center로 뽑은 뒤 합친다.
-    # 기준은 이미지축 바운딩박스가 아니라 seg_mask에 OBB를 씌운 실제 긴 축 길이(회전 무관).
+
     ys_all, xs_all = np.where(seg_mask)
     if ys_all.size == 0:
         return None
@@ -310,44 +292,13 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
             zone_idx = np.clip((tt * 3.0).astype(np.int32), 0, 2)
             z_ref_map[sy, sx] = zone_z[zone_idx]
 
-    # ---- 2차: 픽셀별 z_ref_map(평면)으로 dz<=tol 테스트 + 실루엣 스냅만 ----
+    # ---- 2차: 픽셀별 z_ref_map(평면)으로 dz<=tol 테스트만 ----
     valid2 = seg_mask & (depth_m > 0)
     vals2 = depth_m[valid2]
     ref2 = z_ref_map[valid2]
     dz2 = vals2 - ref2
     top_mask2 = np.zeros_like(seg_mask, dtype=bool)
     top_mask2[valid2] = (dz2 <= tol) & (dz2 >= -tol * TOL_CAM_SIDE_MULT)
-
-    # 바닥-윗면 경계(실루엣) 스냅: SAM2 경계 바로 안쪽 띠와 바로 바깥(배경)을 짝지어 비교
-    seg_u8 = seg_mask.astype(np.uint8) * 255
-    seg_border = seg_u8 - cv2.erode(seg_u8, _EDGE_KERNEL)   # 안쪽 가장자리 띠
-    seg_border_mask = seg_border > 0
-
-    d_outside_prop = np.where((seg_u8 == 0) & (depth_m > 0), depth_m, 0.0).astype(np.float32)
-    local_outside_depth = cv2.dilate(d_outside_prop, _EDGE_KERNEL)
-
-    box_height_m = floor_m - r1['z_center']
-    silhouette_tol_m = max(SILHOUETTE_HEIGHT_TOL_MIN_M,
-                           box_height_m * SILHOUETTE_HEIGHT_TOL_RATIO)
-    drop = local_outside_depth - depth_m
-    # 배경과의 낙차만 보면 옆면 중간 픽셀도 우연히 박스 높이만큼 낙차가 나서 통과할 수 있음 ->
-    # 그 픽셀 자체 depth도 z_ref_map(윗면 기준 평면) 근처여야 한다는 조건을 추가
-    z_ref_ok = np.abs(depth_m - z_ref_map) <= tol * SILHOUETTE_Z_TOL_MULT
-    is_true_silhouette = (local_outside_depth > 0) & \
-        (np.abs(drop - box_height_m) <= silhouette_tol_m) & \
-        z_ref_ok
-
-    top_mask2_u8 = (top_mask2.astype(np.uint8) * 255)
-    dilated2 = cv2.dilate(top_mask2_u8, _SNAP_KERNEL)
-    newly_added2 = (dilated2 > 0) & ~top_mask2 & seg_mask
-    near_silhouette2 = newly_added2 & seg_border_mask & is_true_silhouette
-    top_mask2 = top_mask2 | near_silhouette2
-
-    if dbg is not None:
-        dbg['jump'] |= seg_border_mask
-        dbg['sil_cand'] |= seg_border_mask & is_true_silhouette
-        dbg['drop'][seg_border_mask] = drop[seg_border_mask]
-        dbg['sil_used'] |= near_silhouette2
 
     if overlay is not None:
         overlay[seg_mask] = (
@@ -365,6 +316,12 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
 
     # 후처리 없이 곧바로 median depth로 최종 z_center 산출
     z_center = float(np.median(depth_m[top_mask2]))
+
+    # 좌우 위치별 z 보정 (좌표변환/높이 계산 전에 적용)
+    dz = float(np.interp(rect_px[0][0],
+                         [Z_CORR_LEFT_U, Z_CORR_REF_U, Z_CORR_RIGHT_U],
+                         [Z_CORR_LEFT_M, 0.0, Z_CORR_RIGHT_M]))
+    z_center += dz
 
     # ---- 실측 크기 계산  ----
     X = (xs - cx) * z_center / fx
@@ -394,13 +351,19 @@ def compute_box_size2(seg_mask, depth_m, floor_m, fx, fy, cx, cy, bcx, bcy,
             angle_deg -= 180.0
 
     # ---- 박스 중앙점 카메라 좌표(X, Y, Z) ----
-    center_x_cm = float(final_rect_m[0][0]) * 100.0
-    center_y_cm = float(final_rect_m[0][1]) * 100.0
-    center_z_cm = z_center * 100.0
+    # 수정-> 중앙 픽셀로 재계산...
+    center_x_m, center_y_m = float(final_rect_m[0][0]), float(final_rect_m[0][1])
+    pu = int(round(center_x_m * fx / z_center + cx))
+    pv = int(round(center_y_m * fy / z_center + cy))
+    py0, py1 = max(0, pv - BOX_CENTER_WIN_PX), min(H, pv + BOX_CENTER_WIN_PX + 1)
+    px0, px1 = max(0, pu - BOX_CENTER_WIN_PX), min(W, pu + BOX_CENTER_WIN_PX + 1)
+    pub_patch = depth_m[py0:py1, px0:px1]
+    pub_valid = pub_patch[pub_patch > 0]
+    z_pub = float(np.median(pub_valid)) + dz if pub_valid.size > 0 else z_center
 
-    # print(f"{label} -> {real_w*100:.1f}, {real_h*100:.1f}, "
-    #       f"z:{(floor_m - z_center)*100:.1f} cm, angle:{angle_deg:.1f} deg, "
-    #       f"center(cam)=({center_x_cm:.1f}, {center_y_cm:.1f}, {center_z_cm:.1f}) cm")
+    center_x_cm = center_x_m * (z_pub / z_center) * 100.0
+    center_y_cm = center_y_m * (z_pub / z_center) * 100.0
+    center_z_cm = z_pub * 100.0
 
     # ---- OBB 실측 면적 필터 ----
     if (real_w * 100) * (real_h * 100) < MIN_AREA_OBB_CM2:
