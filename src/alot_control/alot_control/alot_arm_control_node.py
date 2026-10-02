@@ -1,0 +1,863 @@
+#!/usr/bin/env python3
+import json
+import math
+import time
+from collections import deque
+import numpy as np
+import rclpy
+from ikpy.chain import Chain
+from ikpy.link import Link, OriginLink
+from rclpy.node import Node
+from geometry_msgs.msg import PointStamped
+from std_msgs.msg import Bool, Float64MultiArray, String
+from alot_control.alot_config import *
+
+def standard_dh_matrix(theta, d, a, alpha):
+    ct = math.cos(theta)
+    st = math.sin(theta)
+    ca = math.cos(alpha)
+    sa = math.sin(alpha)
+    return np.array([
+        [ct, -st * ca,  st * sa, a * ct],
+        [st,  ct * ca, -ct * sa, a * st],
+        [0.0,      sa,       ca,      d],
+        [0.0,     0.0,      0.0,    1.0],
+    ], dtype=float)
+
+class StandardDHRevoluteLink(Link):
+
+    def __init__(
+        self,
+        name,
+        d,
+        a,
+        alpha,
+        theta_offset,
+        joint_sign,
+        bounds,
+    ):
+        length = max(abs(float(d)), abs(float(a)), 1e-9)
+        super().__init__(name=name, length=length, bounds=bounds)
+        self.d = float(d)
+        self.a = float(a)
+        self.alpha = float(alpha)
+        self.theta_offset = float(theta_offset)
+        self.joint_sign = float(joint_sign)
+        self.has_rotation = True
+        self.joint_type = "revolute"
+
+    def get_link_frame_matrix(self, q):
+        theta = self.theta_offset + self.joint_sign * float(q)
+        return standard_dh_matrix(
+            theta,
+            self.d,
+            self.a,
+            self.alpha,
+        )
+
+    def get_rotation_axis(self):
+        return np.array([0.0, 0.0, 1.0, 1.0], dtype=float)
+
+class StandardDHFixedLink(Link):
+
+    def __init__(self, name, d=0.0, a=0.0, alpha=0.0, theta=0.0):
+        length = max(abs(float(d)), abs(float(a)), 1e-9)
+        super().__init__(name=name, length=length)
+        self.d = float(d)
+        self.a = float(a)
+        self.alpha = float(alpha)
+        self.theta = float(theta)
+        self.has_rotation = False
+        self.joint_type = "fixed"
+
+    def get_link_frame_matrix(self, _unused):
+        return standard_dh_matrix(
+            self.theta,
+            self.d,
+            self.a,
+            self.alpha,
+        )
+
+class KeepArmControlNode(Node):
+
+    def __init__(self):
+        super().__init__("keep_arm_control_node")
+        self.create_subscription(
+            Bool,
+            CONTROL_DONE_TOPIC,
+            self.control_done_callback,
+            10,
+        )
+        self.create_subscription(
+            Float64MultiArray,
+            PRESENT_JOINT_TOPIC,
+            self.present_joint_callback,
+            10,
+        )
+        self.trajectory_pub = self.create_publisher(
+            Float64MultiArray,
+            TRAJECTORY_TOPIC,
+            10,
+        )
+        self.pneumatic_pub = self.create_publisher(
+            String,
+            PNEUMATIC_CMD_TOPIC,
+            10,
+        )
+        self.create_subscription(
+            PointStamped,
+            VISION_PICK_TOPIC,
+            self.vision_pick_callback,
+            10,
+        )
+        self.create_subscription(
+            String,
+            MAIN2_ARM_COMMAND_TOPIC,
+            self.arm_command_callback,
+            10,
+        )
+        self.arm_result_pub = self.create_publisher(
+            String,
+            MAIN2_ARM_RESULT_TOPIC,
+            10,
+        )
+        self.vision_pick_base_pub = self.create_publisher(
+            PointStamped,
+            VISION_PICK_BASE_TOPIC,
+            10,
+        )
+        self.chain = self._build_chain()
+        self.current_q = HOME_JOINT_RAD.copy()
+        self.pending_steps = deque()
+        self.busy = False
+        self.waiting_control = False
+        self.action_timer = None
+        self.active_command_id = None
+        self.active_command_name = None
+        self.vision_rearm_time = 0.0
+        self._warned_frame_mismatch = False
+        self.latest_present_q = None
+        self.latest_present_q_time = None
+        self._last_present_joint_warn_time = 0.0
+        self.get_logger().info(
+            f"Arm Control ready | command_topic={MAIN2_ARM_COMMAND_TOPIC} | "
+            f"vision_topic={VISION_PICK_TOPIC}"
+        )
+
+    # ============================================================
+    # IKPy Chain
+    # ============================================================
+
+    def _build_chain(self):
+        links = [OriginLink()]
+        joint_names = ["joint_1", "joint_2", "joint_3", "joint_4"]
+        for i, name in enumerate(joint_names):
+            links.append(
+                StandardDHRevoluteLink(
+                    name=name,
+                    d=DH_D_M[i],
+                    a=DH_A_M[i],
+                    alpha=DH_ALPHA_RAD[i],
+                    theta_offset=DH_THETA_OFFSETS_RAD[i],
+                    joint_sign=DH_JOINT_SIGN[i],
+                    bounds=(
+                        float(JOINT_LIMIT_LOWER_RAD[i]),
+                        float(JOINT_LIMIT_UPPER_RAD[i]),
+                    ),
+                )
+            )
+        links.append(
+            StandardDHFixedLink(
+                name="tool_tip",
+                d=DH_D_TOOL,
+                a=0.0,
+                alpha=0.0,
+                theta=0.0,
+            )
+        )
+        chain = Chain(
+            name="alot_4dof_standard_dh",
+            links=links,
+            active_links_mask=[False, True, True, True, True, False],
+        )
+        full_home = np.zeros(len(chain.links), dtype=float)
+        home_fk = chain.forward_kinematics(full_home)
+        expected_xyz = np.array([
+            0.0,
+            0.0,
+            DH_D_M[0] + DH_A_M[1] + DH_A_M[2] + DH_D_TOOL,
+        ])
+        xyz_error = np.linalg.norm(home_fk[:3, 3] - expected_xyz)
+        rot_error = np.linalg.norm(home_fk[:3, :3] - np.eye(3))
+        if xyz_error > 1e-9 or rot_error > 1e-9:
+            raise RuntimeError(
+                "Standard DH HOME verification failed | "
+                f"xyz={np.round(home_fk[:3, 3] * 1000.0, 6).tolist()} mm | "
+                f"xyz_error={xyz_error:.3e} | rot_error={rot_error:.3e}"
+            )
+        return chain
+
+    # ============================================================
+    # Basic FK / IK helpers
+    # ============================================================
+
+    def _camera_point_to_base(self, camera_xyz_m, q):
+        full_q = np.zeros(len(self.chain.links), dtype=float)
+        full_q[1:5] = np.asarray(q, dtype=float)
+
+        t_base_dh = self.chain.forward_kinematics(full_q)
+
+        t_dh_tool = np.eye(4, dtype=float)
+        t_dh_tool[:3, :3] = R_DH_PHYSICAL_TOOL
+
+        t_tool_camera = np.eye(4, dtype=float)
+        t_tool_camera[:3, :3] = R_PHYSICAL_TOOL_CAMERA
+        t_tool_camera[:3, 3] = T_PHYSICAL_TOOL_CAMERA_M
+
+        p_camera = np.ones(4, dtype=float)
+        p_camera[:3] = np.asarray(camera_xyz_m, dtype=float)
+
+        return (t_base_dh @ t_dh_tool @ t_tool_camera @ p_camera)[:3]
+
+    def _solve_ik(self, xyz_m, seed_q, label="IK"):
+        desired_xyz_m = np.asarray(xyz_m, dtype=float)
+
+        ik_xyz_m = desired_xyz_m.copy()
+        z_compensation_mm = 0.0
+        if Z_COMPENSATION_ENABLED:
+            r_mm = float(
+                np.hypot(desired_xyz_m[0], desired_xyz_m[1]) * 1000.0
+            )
+            predicted_error_mm = Z_COMP_A * r_mm + Z_COMP_B
+            z_compensation_mm = -predicted_error_mm
+            ik_xyz_m[2] += z_compensation_mm / 1000.0
+
+        yaw = math.atan2(float(ik_xyz_m[1]), float(ik_xyz_m[0]))
+        candidates_deg = [
+            np.rad2deg(seed_q),
+            [math.degrees(yaw), 60.0, 60.0, 60.0],
+            [math.degrees(yaw), 90.0, 0.0, 90.0],
+            [math.degrees(yaw), 45.0, 45.0, 90.0],
+            [math.degrees(yaw), 100.0, -20.0, 100.0],
+            [math.degrees(yaw), -60.0, -60.0, -60.0],
+            [math.degrees(yaw), -90.0, 0.0, -90.0],
+        ]
+
+        best = None
+        diagnostics = []
+
+        for candidate in candidates_deg:
+            candidate_seed = np.deg2rad(np.asarray(candidate, dtype=float))
+            if not (
+                np.all(candidate_seed >= JOINT_LIMIT_LOWER_RAD)
+                and np.all(candidate_seed <= JOINT_LIMIT_UPPER_RAD)
+            ):
+                continue
+
+            full_seed = np.zeros(len(self.chain.links), dtype=float)
+            full_seed[1:5] = candidate_seed
+
+            try:
+                full_q = self.chain.inverse_kinematics(
+                    target_position=ik_xyz_m,
+                    target_orientation=TOOL_DOWN_VECTOR,
+                    orientation_mode="Z",
+                    initial_position=full_seed,
+                )
+            except Exception as exc:
+                diagnostics.append(f"solver={exc}")
+                continue
+
+            q = np.asarray(full_q[1:5], dtype=float)
+            fk = self.chain.forward_kinematics(full_q)
+            solved_xyz = np.asarray(fk[:3, 3], dtype=float)
+            solved_tool_z = np.asarray(fk[:3, 2], dtype=float)
+
+            pos_error = float(np.linalg.norm(solved_xyz - ik_xyz_m))
+
+            solved_tool_z /= np.linalg.norm(solved_tool_z)
+            target_tool_z = (
+                TOOL_DOWN_VECTOR / np.linalg.norm(TOOL_DOWN_VECTOR)
+            )
+            dot = float(
+                np.clip(np.dot(solved_tool_z, target_tool_z), -1.0, 1.0)
+            )
+            ori_error = math.degrees(math.acos(dot))
+
+            limits_ok = bool(
+                np.all(q >= JOINT_LIMIT_LOWER_RAD)
+                and np.all(q <= JOINT_LIMIT_UPPER_RAD)
+            )
+
+            diagnostics.append(
+                f"q={np.round(np.rad2deg(q), 2).tolist()} "
+                f"pos={pos_error * 1000.0:.2f}mm "
+                f"ori={ori_error:.2f}deg "
+                f"limit={limits_ok}"
+            )
+
+            if not limits_ok:
+                continue
+
+            score = pos_error + math.radians(ori_error) * 0.01
+            if best is None or score < best["score"]:
+                best = {
+                    "q": q,
+                    "solved_xyz": solved_xyz,
+                    "pos_error": pos_error,
+                    "ori_error": ori_error,
+                    "score": score,
+                }
+
+        if best is None:
+            raise RuntimeError(
+                f"{label}: no valid IK solution | "
+                f"desired={np.round(desired_xyz_m * 1000.0, 2).tolist()} mm | "
+                f"ik_target={np.round(ik_xyz_m * 1000.0, 2).tolist()} mm | "
+                f"z_comp={z_compensation_mm:+.2f} mm | "
+                + " ; ".join(diagnostics[-4:])
+            )
+
+        if (
+            best["pos_error"] > IK_POSITION_TOLERANCE_M
+            or best["ori_error"] > IK_ORIENTATION_TOLERANCE_DEG
+        ):
+            raise RuntimeError(
+                f"{label}: IK tolerance failure | "
+                f"desired={np.round(desired_xyz_m * 1000.0, 2).tolist()} mm | "
+                f"ik_target={np.round(ik_xyz_m * 1000.0, 2).tolist()} mm | "
+                f"z_comp={z_compensation_mm:+.2f} mm | "
+                f"solved={np.round(best['solved_xyz'] * 1000.0, 2).tolist()} mm | "
+                f"pos_error={best['pos_error'] * 1000.0:.2f} mm | "
+                f"ori_error={best['ori_error']:.2f} deg | "
+                f"q={np.round(np.rad2deg(best['q']), 2).tolist()} deg"
+            )
+
+        return best["q"]
+
+    # ============================================================
+    # Trajectory generation
+    # ============================================================
+
+    def _build_joint_transition(
+        self,
+        start_q,
+        goal_q,
+        duration=STARTUP_TRANSITION_TIME_SEC,
+    ):
+        point_count = max(
+            MIN_TRAJECTORY_POINTS,
+            int(math.ceil(duration / CONTROL_DT)) + 1,
+        )
+        start_q = np.asarray(start_q, dtype=float)
+        goal_q = np.asarray(goal_q, dtype=float)
+        points = []
+        for i in range(point_count):
+            tau = i / (point_count - 1)
+            s = 10.0 * tau**3 - 15.0 * tau**4 + 6.0 * tau**5
+            q = start_q + s * (goal_q - start_q)
+            if not (
+                np.all(q >= JOINT_LIMIT_LOWER_RAD)
+                and np.all(q <= JOINT_LIMIT_UPPER_RAD)
+            ):
+                raise RuntimeError(
+                    "HOME transition joint limit violation: "
+                    f"{np.round(np.rad2deg(q), 2).tolist()} deg"
+                )
+            points.append(q.copy())
+        return np.asarray(points)
+
+    def _build_cartesian_joint_trajectory(
+        self,
+        start_xyz,
+        goal_xyz,
+        motion_type,
+        seed_q,
+        label,
+    ):
+        start_xyz = np.asarray(start_xyz, dtype=float)
+        goal_xyz = np.asarray(goal_xyz, dtype=float)
+        if motion_type == "vertical":
+            if not np.allclose(start_xyz[:2], goal_xyz[:2], atol=1e-9):
+                raise ValueError(
+                    f"{label}: vertical segment changed X/Y."
+                )
+        elif motion_type == "horizontal":
+            if not np.isclose(start_xyz[2], goal_xyz[2], atol=1e-9):
+                raise ValueError(
+                    f"{label}: horizontal segment changed Z."
+                )
+        else:
+            raise ValueError(f"Unknown motion type: {motion_type}")
+        distance = float(np.linalg.norm(goal_xyz - start_xyz))
+        speed = VERTICAL_SPEED if motion_type == "vertical" else HORIZONTAL_SPEED
+        duration = max(distance / speed, MIN_SEGMENT_TIME)
+
+        point_count = max(
+            MIN_TRAJECTORY_POINTS,
+            int(math.ceil(duration / CONTROL_DT)) + 1,
+        )
+        q_seed = np.asarray(seed_q, dtype=float).copy()
+        q_points = []
+        for i in range(point_count):
+            tau = i / (point_count - 1)
+            s = 10.0 * tau**3 - 15.0 * tau**4 + 6.0 * tau**5
+            xyz = start_xyz + s * (goal_xyz - start_xyz)
+            try:
+                q_seed = self._solve_ik(
+                    xyz,
+                    q_seed,
+                    label=f"{label} sample {i + 1}/{point_count}",
+                )
+            except Exception as exc:
+                raise RuntimeError(str(exc)) from exc
+            q_points.append(q_seed.copy())
+        return np.asarray(q_points)
+
+    # ============================================================
+    # Main2 command interface
+    # ============================================================
+
+    def _publish_arm_result(self, success, message, command_id=None):
+        result = {
+            "id": self.active_command_id if command_id is None else command_id,
+            "command": self.active_command_name,
+            "success": bool(success),
+            "message": str(message),
+        }
+        msg = String()
+        msg.data = json.dumps(result, ensure_ascii=False)
+        self.arm_result_pub.publish(msg)
+
+    def arm_command_callback(self, msg):
+        try:
+            command = json.loads(msg.data)
+            command_id = int(command["id"])
+            command_name = str(command["command"])
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+            self.get_logger().error(f"Invalid Main2 arm command: {exc}")
+            self._publish_arm_result(False, f"invalid command: {exc}", -1)
+            return
+        if self.busy or self.waiting_control:
+            self._publish_arm_result(
+                False,
+                "arm is busy",
+                command_id,
+            )
+            return
+        self.active_command_id = command_id
+        self.active_command_name = command_name
+        try:
+            if command_name == "move_named_pose":
+                self._execute_move_named_pose(str(command["pose"]))
+            elif command_name == "pick_place":
+                self._execute_pick_place_command(command)
+            else:
+                raise ValueError(f"unsupported command: {command_name}")
+        except Exception as exc:
+            self.get_logger().error(
+                f"Arm command planning failed | id={command_id} | {exc}"
+            )
+            self._publish_arm_result(False, str(exc))
+            self.active_command_id = None
+            self.active_command_name = None
+
+    def _execute_move_named_pose(self, pose_name):
+        if pose_name not in ARM_NAMED_POSE_JOINT_RAD:
+            raise ValueError(f"unknown named pose: {pose_name}")
+        target_q = np.asarray(
+            ARM_NAMED_POSE_JOINT_RAD[pose_name],
+            dtype=float,
+        )
+        q_points = self._build_joint_transition(
+            self.current_q,
+            target_q,
+            duration=STARTUP_TRANSITION_TIME_SEC,
+        )
+        self.pending_steps = deque([
+            (
+                "trajectory",
+                q_points,
+                f"MOVE_NAMED_POSE -> {pose_name}",
+            )
+        ])
+        self.busy = True
+        self._run_next_step()
+
+    def _execute_pick_place_command(self, command):
+        pick = np.asarray(command["pick_xyz_m"], dtype=float)
+        place = np.asarray(command["place_xyz_m"], dtype=float)
+        return_pose = str(command["return_pose"])
+        if pick.shape != (3,) or place.shape != (3,):
+            raise ValueError("pick_xyz_m/place_xyz_m must contain 3 values")
+        if not np.all(np.isfinite(pick)) or not np.all(np.isfinite(place)):
+            raise ValueError("pick/place contains non-finite value")
+        if return_pose not in ARM_NAMED_POSE_JOINT_RAD:
+            raise ValueError(f"unknown return pose: {return_pose}")
+        self.pending_steps = self._plan_pick_place(
+            pick,
+            place,
+            ARM_NAMED_POSE_JOINT_RAD[return_pose],
+            return_pose,
+        )
+        self.busy = True
+        self._run_next_step()
+
+    # ============================================================
+    # Vision input / coordinate transform
+    # ============================================================
+
+    def present_joint_callback(self, msg):
+        if len(msg.data) != 4:
+            return
+        q = np.asarray(msg.data, dtype=float)
+        if not np.all(np.isfinite(q)):
+            return
+        self.latest_present_q = q
+        self.latest_present_q_time = time.monotonic()
+
+    def vision_pick_callback(self, msg):
+        if self.busy or self.waiting_control:
+            return
+        if time.monotonic() < self.vision_rearm_time:
+            return
+        if msg.header.frame_id and msg.header.frame_id != VISION_CAMERA_FRAME:
+            if not self._warned_frame_mismatch:
+                self.get_logger().warning(
+                    "Vision frame mismatch | "
+                    f"received={msg.header.frame_id} | "
+                    f"expected={VISION_CAMERA_FRAME}"
+                )
+                self._warned_frame_mismatch = True
+            return
+        # Main2가 Vision을 사용하는 모든 view pose에서만 좌표를 수용한다.
+        # Mode 1: shelf depth views
+        # Mode 2: basket view
+        # Mode 3: keep view
+        vision_pose_names = (
+            "DEPTH_VIEW_AB",
+            "DEPTH_VIEW_CD",
+            "DEPTH_VIEW_EF",
+            "DEPTH_VIEW_GH",
+            "BASKET_VIEW",
+            "KEEP_VIEW",
+        )
+        at_vision_pose = any(
+            np.allclose(
+                self.current_q,
+                ARM_NAMED_POSE_JOINT_RAD[name],
+                atol=np.deg2rad(1.0),
+            )
+            for name in vision_pose_names
+        )
+        if not at_vision_pose:
+            return
+        camera_xyz = np.array([
+            msg.point.x,
+            msg.point.y,
+            msg.point.z,
+        ], dtype=float)
+        if not np.all(np.isfinite(camera_xyz)):
+            return
+        # Camera is eye-in-hand, so commanded current_q가 아니라
+        # 실제 Dynamixel Present Position을 사용해 Camera -> Base 변환한다.
+        present_age = None
+        feedback_warning = None
+
+        if (
+            self.latest_present_q is None
+            or self.latest_present_q_time is None
+        ):
+            feedback_warning = (
+                "Vision ignored: actual joint feedback not received yet"
+            )
+        else:
+            present_age = time.monotonic() - self.latest_present_q_time
+            if present_age > PRESENT_JOINT_MAX_AGE_SEC:
+                feedback_warning = (
+                    "Vision ignored: actual joint feedback is stale | "
+                    f"age={present_age:.3f}s"
+                )
+
+        if feedback_warning is not None:
+            now = time.monotonic()
+            if now - self._last_present_joint_warn_time >= 1.0:
+                self.get_logger().warning(feedback_warning)
+                self._last_present_joint_warn_time = now
+            return
+        vision_q = self.latest_present_q.copy()
+        raw_base_xyz = self._camera_point_to_base(
+            camera_xyz,
+            vision_q,
+        )
+        # Vision 좌표계 calibration:
+        # Camera -> Base 변환 결과 중 Z에만 독립적인 offset을 적용한다.
+        # Robot Z compensation과 별도로 Vision Z offset만 적용한다.
+        base_xyz = raw_base_xyz.copy()
+        base_xyz[0] += VISION_BASE_X_OFFSET_M
+        base_xyz[1] += VISION_BASE_Y_OFFSET_M
+        base_xyz[2] += VISION_BASE_Z_OFFSET_M
+        out = PointStamped()
+        out.header = msg.header
+        out.header.frame_id = "base_link"
+        out.point.x = float(base_xyz[0])
+        out.point.y = float(base_xyz[1])
+        out.point.z = float(base_xyz[2])
+        self.vision_pick_base_pub.publish(out)
+
+    def _build_arc_joint_trajectory(
+        self,
+        start_xyz,
+        goal_xyz,
+        seed_q,
+        label="ARC TRANSPORT",
+    ):
+        start_xyz = np.asarray(start_xyz, dtype=float)
+        goal_xyz = np.asarray(goal_xyz, dtype=float)
+        start_r = float(np.hypot(start_xyz[0], start_xyz[1]))
+        goal_r = float(np.hypot(goal_xyz[0], goal_xyz[1]))
+        start_theta = math.atan2(start_xyz[1], start_xyz[0])
+        goal_theta = math.atan2(goal_xyz[1], goal_xyz[0])
+        # J1이 ±180°를 완전히 돌 수 없으므로 atan2의 raw angle을 그대로
+        # 연결한다. 예: +170° -> -170°는 180°를 넘는 짧은 길 대신
+        # 0° 쪽으로 돌아가는 긴 경로가 되어 J1 limit을 피한다.
+        theta_delta = goal_theta - start_theta
+        # Arc 길이 근사:
+        # 평균 반지름에서의 angular distance + radial/z 변화
+        mean_r = 0.5 * (start_r + goal_r)
+        angular_distance = abs(mean_r * theta_delta)
+        radial_distance = abs(goal_r - start_r)
+        vertical_distance = abs(goal_xyz[2] - start_xyz[2])
+        path_length = math.sqrt(
+            angular_distance**2
+            + radial_distance**2
+            + vertical_distance**2
+        )
+        duration = max(
+            path_length / HORIZONTAL_SPEED,
+            MIN_SEGMENT_TIME,
+        )
+        point_count = max(
+            MIN_TRAJECTORY_POINTS,
+            int(math.ceil(duration / CONTROL_DT)) + 1,
+        )
+        q_seed = np.asarray(seed_q, dtype=float).copy()
+        q_points = []
+        for i in range(point_count):
+            tau = i / (point_count - 1)
+            s = 10.0 * tau**3 - 15.0 * tau**4 + 6.0 * tau**5
+            radius = start_r + s * (goal_r - start_r)
+            theta = start_theta + s * theta_delta
+            z = start_xyz[2] + s * (goal_xyz[2] - start_xyz[2])
+            xyz = np.array([
+                radius * math.cos(theta),
+                radius * math.sin(theta),
+                z,
+            ], dtype=float)
+            q_seed = self._solve_ik(
+                xyz,
+                q_seed,
+                label=f"{label} sample {i + 1}/{point_count}",
+            )
+            q_points.append(q_seed.copy())
+        return np.asarray(q_points)
+
+    # ============================================================
+    # Full-cycle pre-planning
+    # ============================================================
+
+    def _plan_pick_place(self, pick, place, return_q, return_pose_name):
+        pick = np.asarray(pick, dtype=float)
+        place = np.asarray(place, dtype=float)
+        # 주변 적재 박스와 충돌하지 않도록 상대 clearance가 아니라
+        # Base-frame 절대 Z 높이까지 수직 상승한 뒤 운반한다.
+        # 예: 두 번째/세 번째 박스를 집어도 항상 Z=160 mm까지 올라간다.
+        pick_above = pick.copy()
+        pick_above[2] = TRAVEL_HEIGHT_Z_M
+        place_above = place.copy()
+        place_above[2] = TRAVEL_HEIGHT_Z_M
+        if pick[2] >= TRAVEL_HEIGHT_Z_M:
+            raise RuntimeError(
+                "PICK Z가 절대 운반 높이보다 높거나 같습니다 | "
+                f"pick_z={pick[2] * 1000.0:.1f} mm | "
+                f"travel_z={TRAVEL_HEIGHT_Z_M * 1000.0:.1f} mm"
+            )
+        if place[2] >= TRAVEL_HEIGHT_Z_M:
+            raise RuntimeError(
+                "PLACE Z가 절대 운반 높이보다 높거나 같습니다 | "
+                f"place_z={place[2] * 1000.0:.1f} mm | "
+                f"travel_z={TRAVEL_HEIGHT_Z_M * 1000.0:.1f} mm"
+            )
+        planned = deque()
+        virtual_q = self.current_q.copy()
+        q_pick_above = self._solve_ik(
+            pick_above,
+            virtual_q,
+            label="PICK_ABOVE",
+        )
+        q_points = self._build_joint_transition(
+            virtual_q,
+            q_pick_above,
+        )
+        planned.append(
+            ("trajectory", q_points, "HOME/CURRENT -> PICK_ABOVE")
+        )
+        virtual_q = q_points[-1].copy()
+        q_points = self._build_cartesian_joint_trajectory(
+            pick_above,
+            pick,
+            "vertical",
+            virtual_q,
+            "PICK_ABOVE -> PICK",
+        )
+        planned.append(
+            ("trajectory", q_points, "PICK_ABOVE -> PICK")
+        )
+        virtual_q = q_points[-1].copy()
+        planned.append(("pneumatic", "on", "PNEUMATIC ON"))
+        q_points = self._build_cartesian_joint_trajectory(
+            pick,
+            pick_above,
+            "vertical",
+            virtual_q,
+            "PICK -> PICK_ABOVE",
+        )
+        planned.append(
+            ("trajectory", q_points, "PICK -> PICK_ABOVE")
+        )
+        virtual_q = q_points[-1].copy()
+        # 중간 BYPASS waypoint 없이 하나의 연속 polar arc로 운반한다.
+        q_points = self._build_arc_joint_trajectory(
+            pick_above,
+            place_above,
+            virtual_q,
+            label="PICK_ABOVE -> PLACE_ABOVE ARC",
+        )
+        planned.append(
+            (
+                "trajectory",
+                q_points,
+                "PICK_ABOVE -> PLACE_ABOVE ARC",
+            )
+        )
+        virtual_q = q_points[-1].copy()
+        q_points = self._build_cartesian_joint_trajectory(
+            place_above,
+            place,
+            "vertical",
+            virtual_q,
+            "PLACE_ABOVE -> PLACE",
+        )
+        planned.append(
+            ("trajectory", q_points, "PLACE_ABOVE -> PLACE")
+        )
+        virtual_q = q_points[-1].copy()
+        planned.append(("pneumatic", "off", "PNEUMATIC OFF"))
+        q_points = self._build_cartesian_joint_trajectory(
+            place,
+            place_above,
+            "vertical",
+            virtual_q,
+            "PLACE -> PLACE_ABOVE",
+        )
+        planned.append(
+            ("trajectory", q_points, "PLACE -> PLACE_ABOVE")
+        )
+        virtual_q = q_points[-1].copy()
+        q_points = self._build_joint_transition(
+            virtual_q,
+            np.asarray(return_q, dtype=float),
+            duration=RETURN_HOME_TIME_SEC,
+        )
+        planned.append(
+            (
+                "trajectory",
+                q_points,
+                f"PLACE_ABOVE -> {return_pose_name}",
+            )
+        )
+        return planned
+
+    # ============================================================
+    # Execution
+    # ============================================================
+
+    def _run_next_step(self):
+        if self.waiting_control:
+            return
+        if not self.pending_steps:
+            self.busy = False
+            self.vision_rearm_time = (
+                time.monotonic() + VISION_REARM_DELAY_SEC
+            )
+            if self.active_command_id is not None:
+                self._publish_arm_result(True, "completed")
+                self.active_command_id = None
+                self.active_command_name = None
+            return
+        step_type, payload, label = self.pending_steps.popleft()
+        if step_type == "pneumatic":
+            command = payload
+            msg = String()
+            msg.data = command
+            self.pneumatic_pub.publish(msg)
+            wait_sec = (
+                PNEUMATIC_ON_WAIT_SEC
+                if command == "on"
+                else PNEUMATIC_OFF_WAIT_SEC
+            )
+            self.get_logger().info(f"{label} | wait={wait_sec:.2f}s")
+            if self.action_timer is not None:
+                self.destroy_timer(self.action_timer)
+            self.action_timer = self.create_timer(
+                wait_sec,
+                self._pneumatic_wait_done,
+            )
+            return
+        q_points = np.asarray(payload, dtype=float)
+        msg = Float64MultiArray()
+        msg.data = [float(len(q_points))]
+        msg.data.extend(q_points.reshape(-1).tolist())
+        self.current_q = q_points[-1].copy()
+        self.waiting_control = True
+        self.trajectory_pub.publish(msg)
+        self.get_logger().info(label)
+
+    def _pneumatic_wait_done(self):
+        if self.action_timer is not None:
+            self.destroy_timer(self.action_timer)
+            self.action_timer = None
+        self._run_next_step()
+
+    def control_done_callback(self, msg):
+        if not msg.data or not self.waiting_control:
+            return
+        self.waiting_control = False
+        self._run_next_step()
+
+    # ============================================================
+    # Shutdown
+    # ============================================================
+
+    def destroy_node(self):
+        if self.action_timer is not None:
+            self.destroy_timer(self.action_timer)
+            self.action_timer = None
+        super().destroy_node()
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = KeepArmControlNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        node.get_logger().warning("Ctrl+C detected -> Arm Control shutdown")
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
