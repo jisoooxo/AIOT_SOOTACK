@@ -8,7 +8,8 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 CAMERA_TRANSLATION = np.array([
-    0.346,   # x
+    # 0.346,   # x
+    0.3425,
     0.0335,  # y
     0.53     # z
 ], dtype=float)

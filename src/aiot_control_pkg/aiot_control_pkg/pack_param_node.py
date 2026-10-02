@@ -8,9 +8,9 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 ## 베이스로 부터 떨어진 거리
-tx = 0.0
-ty = 0.0
-tz = 0.0
+tx = -0.335
+ty = -0.315
+tz = -0.15
 
 T_BASE_BOX = np.array([
     [1.0, 0.0, 0.0, tx],

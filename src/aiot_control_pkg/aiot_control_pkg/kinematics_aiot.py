@@ -225,47 +225,170 @@ class AIOTKinematics:
 
                 seeds.append(np.clip(seed, JOINT_MIN[:5], JOINT_MAX[:5]))
 
-        candidates = []
+        POSITION_WEIGHT_START = 150.0
+        POSITION_WEIGHT_MIN = 40.0
+        POSITION_WEIGHT_STEP = 5.0
 
-        for seed in seeds:
-            def build_q(active_q):
-                q = previous_q.copy()
-                q[:5] = active_q
-                q[5] = previous_q[5]
-                return q
+        POSITION_TOL = 0.003
+        AXIS_TOL = 0.02
 
-            def residual(active_q):
-                q = build_q(active_q)
+        best_overall = None
+        success_q = None
+        success_position_error = None
+        success_axis_error = None
+        success_weight = None
+
+        position_weight = POSITION_WEIGHT_START
+
+        while position_weight >= POSITION_WEIGHT_MIN:
+
+            candidates = []
+
+            for seed in seeds:
+
+                def build_q(active_q):
+                    q = previous_q.copy()
+                    q[:5] = active_q
+                    q[5] = previous_q[5]
+                    return q
+
+                def residual(active_q):
+                    q = build_q(active_q)
+
+                    transform = self.fk_matrix(q)
+
+                    position_error = transform[:3, 3] - position
+
+                    axis_error = transform[:3, 2] - target_axis
+
+                    joint_delta = (
+                        q[:5] - previous_q[:5] + np.pi
+                    ) % (2.0 * np.pi) - np.pi
+
+                    return np.concatenate([
+                        position_weight * position_error,
+                        0.5 * axis_error,
+                        0.01 * joint_delta
+                    ])
+
+                result = least_squares(
+                    residual,
+                    seed,
+                    bounds=(
+                        JOINT_MIN[:5], JOINT_MAX[:5]
+                    ),
+                    max_nfev=500
+                )
+
+                q = build_q(result.x)
+
                 transform = self.fk_matrix(q)
-                position_error = transform[:3, 3] - position
-                axis_error = transform[:3, 2] - target_axis
-                joint_delta = (q[:5] - previous_q[:5] + np.pi) % (2.0 * np.pi) - np.pi
-                return np.concatenate([70.0 * position_error, 0.6 * axis_error, 0.01 * joint_delta])
 
-            result = least_squares(residual, seed, bounds=(JOINT_MIN[:5], JOINT_MAX[:5]), max_nfev=500)
+                position_error = np.linalg.norm(transform[:3, 3] - position)
 
-            q = build_q(result.x)
-            transform = self.fk_matrix(q)
-            position_error = np.linalg.norm(transform[:3, 3] - position)
-            axis_error = np.linalg.norm(transform[:3, 2] - target_axis)
-            score = (position_error / 0.005 + axis_error / 0.02)
-            candidates.append((score, position_error, axis_error, q))
+                axis_error = np.linalg.norm(
+                    transform[:3, 2] - target_axis
+                )
 
-        candidates.sort(key=lambda x: x[0])
-        _, position_error, axis_error, q = candidates[0]
+                score = (
+                    position_error / POSITION_TOL + axis_error / AXIS_TOL
+                )
 
-        if position_error > 0.005:
-            raise RuntimeError(f'탑다운 IK 위치 오차 초과: {position_error:.4f}m')
+                candidates.append((
+                    score,
+                    position_error,
+                    axis_error,
+                    q
+                ))
 
-        if axis_error > 0.02:
-            raise RuntimeError(f'탑다운 IK 자세 오차 초과: {axis_error:.4f}')
+            # ========================================================
+            # 현재 weight의 가장 좋은 candidate
+            # ========================================================
+            candidates.sort(key=lambda x: x[0])
 
-        q[5] = self.target_q6(yaw, q, previous_q[5], position)
+            score, position_error, axis_error, q = candidates[0]
+
+            valid_candidates = [
+                candidate
+                for candidate in candidates
+                if (
+                    candidate[1] <= POSITION_TOL
+                    and candidate[2] <= AXIS_TOL
+                )
+            ]
+
+            if self.logger:
+                self.logger.info(
+                    f'[Topdown IK] weight={position_weight:.0f}, '
+                    f'pos_error={position_error * 1000.0:.2f}mm, '
+                    f'axis_error={axis_error:.4f}'
+                )
+
+            # 전체 weight 중 가장 좋은 결과 저장
+            if best_overall is None or score < best_overall[0]:
+                best_overall = (
+                    score,
+                    position_error,
+                    axis_error,
+                    q.copy(),
+                    position_weight
+                )
+
+            if valid_candidates:
+                (
+                    _,
+                    success_position_error,
+                    success_axis_error,
+                    success_q
+                ) = valid_candidates[0]
+
+                success_q = success_q.copy()
+                success_weight = position_weight
+
+                break
+
+            # 실패 → position weight 5 감소
+            position_weight -= POSITION_WEIGHT_STEP
+
+        # ============================================================
+        # 모든 weight 실패
+        # ============================================================
+        if success_q is None:
+            (
+                _,
+                best_position_error,
+                best_axis_error,
+                _,
+                best_weight
+            ) = best_overall
+
+            raise RuntimeError(
+                f'탑다운 IK 실패: '
+                f'weight {POSITION_WEIGHT_START:.0f}~{POSITION_WEIGHT_MIN:.0f} 탐색, '
+                f'best_weight={best_weight:.0f}, '
+                f'pos_error={best_position_error:.4f}m, '
+                f'axis_error={best_axis_error:.4f}'
+            )
+
+        # ============================================================
+        # 성공한 IK에 q6 적용
+        # ============================================================
+        q = success_q
+
+        q[5] = self.target_q6(
+            yaw,
+            q,
+            previous_q[5],
+            position
+        )
 
         if self.logger:
             self.logger.info(
-                f'탑다운 IK: target={position.round(4).tolist()}, '
-                f'pos_error={position_error:.4f}m, axis_error={axis_error:.4f}, '
+                f'탑다운 IK 성공: '
+                f'weight={success_weight:.0f}, '
+                f'target={position.round(4).tolist()}, '
+                f'pos_error={success_position_error:.4f}m, '
+                f'axis_error={success_axis_error:.4f}, '
                 f'q={np.rad2deg(q).round(1).tolist()}'
             )
 
