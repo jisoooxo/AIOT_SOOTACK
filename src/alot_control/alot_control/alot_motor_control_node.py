@@ -29,6 +29,7 @@ class KeepMotorControlNode(Node):
         self.trajectory = None
         self.index = 0
         self.motion_timer = None
+        self.goal_wait_start_time = None
 
         self.port_handler = None
         self.packet_handler = None
@@ -252,6 +253,7 @@ class KeepMotorControlNode(Node):
 
         self.trajectory = flat.reshape(point_count, DOF)
         self.index = 0
+        self.goal_wait_start_time = None
         self.motion_timer = self.create_timer(CONTROL_DT, self._stream_next_point)
 
     def _stream_next_point(self):
@@ -266,11 +268,27 @@ class KeepMotorControlNode(Node):
                 error = np.abs(final_ticks - present)
 
                 if not np.all(error <= POSITION_TOLERANCE_TICKS):
-                    return
+                    now = time.monotonic()
+                    if self.goal_wait_start_time is None:
+                        self.goal_wait_start_time = now
+
+                    elapsed = now - self.goal_wait_start_time
+                    if elapsed < TRAJECTORY_GOAL_WAIT_TIMEOUT_SEC:
+                        return
+
+                    self.get_logger().warning(
+                        "Trajectory goal timeout -> continue next path | "
+                        f"wait={elapsed:.2f}s | "
+                        f"target={final_ticks.tolist()} | "
+                        f"present={present.tolist()} | "
+                        f"error={error.tolist()} | "
+                        f"tolerance={POSITION_TOLERANCE_TICKS.tolist()}"
+                    )
 
             self.destroy_timer(self.motion_timer)
             self.motion_timer = None
             self.trajectory = None
+            self.goal_wait_start_time = None
 
             done = Bool()
             done.data = True
@@ -288,6 +306,7 @@ class KeepMotorControlNode(Node):
                 self.destroy_timer(self.motion_timer)
                 self.motion_timer = None
             self.trajectory = None
+            self.goal_wait_start_time = None
 
     def _open_pneumatic_serial(self):
         if not PNEUMATIC_SERIAL_ENABLED:
@@ -343,29 +362,93 @@ class KeepMotorControlNode(Node):
             except Exception:
                 pass
             self.motion_timer = None
+
         self.trajectory = None
+        self.goal_wait_start_time = None
 
         if self.packet_handler is not None and self.port_handler is not None:
+            failed_ids = []
+
             for dxl_id in DXL_IDS:
-                try:
-                    self.packet_handler.write1ByteTxRx(
-                        self.port_handler,
-                        dxl_id,
-                        ADDR_TORQUE_ENABLE,
-                        TORQUE_DISABLE,
-                    )
-                except Exception as exc:
+                torque_off_verified = False
+                last_error = None
+
+                for attempt in range(1, 4):
                     try:
-                        self.get_logger().error(
-                            f"Torque OFF failed | ID={dxl_id} | {exc}"
+                        comm_result, error = self.packet_handler.write1ByteTxRx(
+                            self.port_handler,
+                            dxl_id,
+                            ADDR_TORQUE_ENABLE,
+                            TORQUE_DISABLE,
+                        )
+                        self._check_result(
+                            dxl_id,
+                            comm_result,
+                            error,
+                            "torque off",
+                        )
+
+                        torque_state, comm_result, error = (
+                            self.packet_handler.read1ByteTxRx(
+                                self.port_handler,
+                                dxl_id,
+                                ADDR_TORQUE_ENABLE,
+                            )
+                        )
+                        self._check_result(
+                            dxl_id,
+                            comm_result,
+                            error,
+                            "torque state verify",
+                        )
+
+                        if int(torque_state) == TORQUE_DISABLE:
+                            torque_off_verified = True
+                            break
+
+                        last_error = RuntimeError(
+                            f"Torque state is still {torque_state}"
+                        )
+                    except Exception as exc:
+                        last_error = exc
+
+                    if attempt < 3:
+                        time.sleep(0.05)
+
+                if torque_off_verified:
+                    try:
+                        self.get_logger().info(
+                            f"Torque OFF verified | ID={dxl_id}"
                         )
                     except Exception:
-                        pass
+                        print(f"Torque OFF verified | ID={dxl_id}")
+                else:
+                    failed_ids.append(dxl_id)
+                    message = (
+                        f"Torque OFF NOT verified | ID={dxl_id} | "
+                        f"{last_error}"
+                    )
+                    try:
+                        self.get_logger().error(message)
+                    except Exception:
+                        print(message)
 
-            try:
-                self.get_logger().warning("DYNAMIXEL TORQUE OFF | all joints")
-            except Exception:
-                pass
+            if failed_ids:
+                message = (
+                    "DYNAMIXEL TORQUE OFF verification failed | "
+                    f"IDs={failed_ids}"
+                )
+                try:
+                    self.get_logger().error(message)
+                except Exception:
+                    print(message)
+            else:
+                try:
+                    self.get_logger().warning(
+                        "DYNAMIXEL TORQUE OFF verified | all joints"
+                    )
+                except Exception:
+                    print("DYNAMIXEL TORQUE OFF verified | all joints")
 
             try:
                 self.port_handler.closePort()
@@ -383,6 +466,7 @@ class KeepMotorControlNode(Node):
                 pass
             self.pneumatic_serial = None
 
+
     def destroy_node(self):
         self._shutdown_hardware()
         super().destroy_node()
@@ -397,7 +481,10 @@ def main(args=None):
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         if node is not None:
-            node.get_logger().warning("종료 요청 감지 | torque off")
+            try:
+                node.get_logger().warning("종료 요청 감지 | torque off")
+            except Exception:
+                pass
     finally:
         if node is not None:
             node.destroy_node()
