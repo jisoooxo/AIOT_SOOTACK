@@ -82,18 +82,13 @@ J3_TO_J4_Z = 0.20000
 J4_TO_TOOL_Z = 0.12610
 
 
-# +joint angle -> +tick
-# J2~J4는 현재 장착방향 기준 확정.
-# J1은 horn 장착방향이 동일하다는 가정으로 +1.
+# +joint angle -> +tick.
 MOTOR_DIRECTION = np.array([+1, +1, +1, +1], dtype=int)
 
 
 # ============================================================
 # Standard DH parameters
 # ============================================================
-# Standard DH:
-# A_i = RotZ(theta_i) * TransZ(d_i) * TransX(a_i) * RotX(alpha_i)
-#
 # Standard DH:
 # A_i = RotZ(theta_i) * TransZ(d_i) * TransX(a_i) * RotX(alpha_i)
 #
@@ -137,8 +132,7 @@ DH_A_M = np.array([
     0.0,
 ])
 
-# Physical/model joint q -> Standard-DH theta sign.
-# 이전 5-DOF 최종 코드와 동일하게 q를 그대로 IKPy에 전달한다.
+# Physical joint q -> Standard-DH theta sign.
 DH_JOINT_SIGN = np.array([
     +1.0,   # J1
     +1.0,   # J2
@@ -188,8 +182,8 @@ MOTOR_MAX_TICKS = np.maximum(JOINT_LIMIT_LOWER_TICKS, JOINT_LIMIT_UPPER_TICKS)
 # ============================================================
 
 # Pick/Place 후 절대 운반 높이 [m].
-# Base-frame Z=170 mm까지 수직 상승한 뒤 이동한다.
-TRAVEL_HEIGHT_Z_M = 0.190
+# Base-frame Z=180 mm까지 수직 상승한 뒤 이동한다.
+TRAVEL_HEIGHT_Z_M = 0.180
 
 # Vision 좌표는 Main2가 샘플링한 뒤 Arm command에 사용한다.
 
@@ -206,17 +200,17 @@ MAIN2_MAX_COUNT_PER_TYPE = 3
 # ------------------------------------------------------------
 # OCR view.
 OCR_VIEW_TICKS = np.array(
-    [2048, 1790, 2865, 2976],
+    [2048, 1790, 2865, 3100],
     dtype=int,
 )
 
 # AB=EF, CD=GH view pose를 재사용한다.
 DEPTH_AB_EF_TICKS = np.array(
-    [2175, 2305, 2250, 3326],
+    [2234, 2239, 2625, 3043],
     dtype=int,
 )
 DEPTH_CD_GH_TICKS = np.array(
-    [1700, 2305, 2250, 3326],
+    [1750, 2239, 2625, 3043],
     dtype=int,
 )
 
@@ -234,20 +228,20 @@ ARM_SAFE_TICKS = np.array(
 )
 
 # Mode 2 Basket view.
-# Basket 공간은 J1=1024 tick 방향으로 고정한다.
+# 현재 Basket 인식 자세의 J1은 3100 tick이다.
 BASKET_VIEW_TICKS = np.array(
     [3100, 2024, 2922, 3072],
     dtype=int,
 )
 
 # Mode 2 Keep view.
-# Basket view와 동일한 J2~J4를 사용하고 J1만 3072 tick으로 둔다.
+# 현재 Keep 인식 자세는 [1024, 2048, 2572, 3372] tick을 사용한다.
 KEEP_VIEW_TICKS = np.array(
     [1024, 2048, 2572, 3372],
     dtype=int,
 )
 
-# Named pose를 Arm Control에서 공통으로 사용한다.
+# Arm Control named poses.
 ARM_NAMED_POSE_TICKS = {
     "OCR_VIEW": OCR_VIEW_TICKS,
     "DEPTH_VIEW_AB": DEPTH_VIEW_TICKS["AB"],
@@ -270,28 +264,29 @@ ARM_NAMED_POSE_JOINT_RAD = {
 # ------------------------------------------------------------
 # 선반 상판 Base-frame Z [m].
 SHELF_Z_M = {
-    "A": -0.02,
-    "C": -0.02,
-    "F": -0.02,
-    "H": -0.02,
+    "A": 0.03,
+    "C": 0.03,
+    "F": 0.03,
+    "H": 0.03,
 }
+
 
 # Mode 1 Basket place base 좌표 [m].
 # A/C/F/H는 각각 고정된 Basket 위치를 사용한다.
 # 같은 종류를 여러 개 놓을 때는 Main2가 측정한 box_height만큼 Z를 올려 쌓는다.
 BASKET_PLACE_BASE_XYZ_M = {
-    "A": np.array([-0.0275, 0.200, 0.055], dtype=float),
-    "C": np.array([-0.0825, 0.200, 0.055], dtype=float),
-    "F": np.array([-0.1375, 0.200, 0.055], dtype=float),
-    "H": np.array([-0.1925, 0.200, 0.055], dtype=float),
+    "A": np.array([-0.00, 0.200, -0.005], dtype=float),
+    "C": np.array([-0.055, 0.200, -0.005], dtype=float),
+    "F": np.array([-0.110, 0.200, -0.005], dtype=float),
+    "H": np.array([-0.165, 0.200, -0.005], dtype=float),
 }
 
 # ------------------------------------------------------------
-# Mode 2 / 3 common Rail placement
+# Mode 2 Rail placement
 # ------------------------------------------------------------
-# 첫 Rail place 좌표 [300, 110, 75] mm.
+# 첫 Rail place 좌표 [280, 55, 170] mm.
 RAIL_FIRST_PLACE_XYZ_M = np.array(
-    [0.280, 0.055, 0.175],
+    [0.280, 0.055, 0.170],
     dtype=float,
 )
 
@@ -311,23 +306,27 @@ MAIN2_SETTING_TOTAL_COUNT = 3
 # ------------------------------------------------------------
 OCR_SHOW_WAIT_SEC = 2.5
 SCOUT_MOVE_WAIT_SEC = 5.0
-STACK_SAMPLE_COUNT = 15
-STACK_SAMPLE_TIMEOUT_SEC = 6.0
+STACK_SAMPLE_COUNT = 5
 STACK_SAMPLE_MAX_SPREAD_M = 0.025
 
 MAIN2_CALIBRATION_COMPLETE = True
 
-# View pose 복귀 직후 Vision 재수용 대기시간.
+# View pose 복귀 직후 Vision 재수용 대기 [s].
 VISION_REARM_DELAY_SEC = 1.0
+
+# Trajectory 마지막 목표점 도달 대기 최대 시간 [s].
+# 이 시간 안에 POSITION_TOLERANCE_TICKS 안으로 들어오지 못하면
+# 경고 후 해당 trajectory를 완료 처리하고 다음 경로로 진행한다.
+TRAJECTORY_GOAL_WAIT_TIMEOUT_SEC = 1.5
 
 # ============================================================
 # Vision coordinate calibration
 # ============================================================
-# Camera -> Base 변환 후 적용하는 Vision Z 고정 offset.
-# 아래 Robot Z compensation과는 별도 보정이다.
-VISION_BASE_X_OFFSET_M = 0.000
-VISION_BASE_Y_OFFSET_M = +0.010
-VISION_BASE_Z_OFFSET_M = -0.040
+# Camera -> Base 변환 후 적용하는 Vision XYZ 고정 offset.
+# Robot Z compensation과는 별도 보정이다.
+VISION_BASE_X_OFFSET_M = 0.010
+VISION_BASE_Y_OFFSET_M = +0.005
+VISION_BASE_Z_OFFSET_M = -0.050
 
 PNEUMATIC_ON_WAIT_SEC = 2.50
 PNEUMATIC_OFF_WAIT_SEC = 1.50
@@ -341,7 +340,7 @@ HORIZONTAL_SPEED = 0.12    # m/s
 MIN_SEGMENT_TIME = 0.60
 MIN_TRAJECTORY_POINTS = 15
 
-IK_POSITION_TOLERANCE_M = 0.005
+IK_POSITION_TOLERANCE_M = 0.015
 IK_ORIENTATION_TOLERANCE_DEG = 3.0
 
 # ============================================================
@@ -352,6 +351,8 @@ IK_ORIENTATION_TOLERANCE_DEG = 3.0
 Z_COMPENSATION_ENABLED = True
 Z_COMP_A = -0.1230
 Z_COMP_B = -1.164
+
+MODE1_BOX_HEIGHT_OFFSET_M = 0.038
 
 # HOME -> 첫 PICK_ABOVE는 joint-space transition.
 STARTUP_TRANSITION_TIME_SEC = 2.5
@@ -396,7 +397,7 @@ PROFILE_VELOCITY = 30
 
 # Goal Position 도달 허용오차 [tick].
 POSITION_TOLERANCE_TICKS = np.array(
-    [15, 32, 27, 30],
+    [15, 40, 35, 30],
     dtype=int,
 )
 
@@ -405,4 +406,3 @@ STARTUP_HOME_ENABLED = True
 STARTUP_HOME_TICKS = HOME_TICKS.copy()
 STARTUP_HOME_TIMEOUT_SEC = 8.0
 STARTUP_HOME_POLL_SEC = 0.05
-
