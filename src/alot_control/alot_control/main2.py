@@ -12,6 +12,7 @@ from geometry_msgs.msg import PointStamped
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
 from alot_control.alot_config import *
+
 MODE_PICKUP_TO_BASKET = 1
 MODE_SETTING = 2
 MODE_NAMES = {
@@ -24,7 +25,10 @@ BOX_VIEW = {
     "F": "DEPTH_VIEW_EF",
     "H": "DEPTH_VIEW_GH",
 }
+
+
 class Main2Node(Node):
+
     def __init__(self):
         super().__init__("main2_node")
         self.mode = None
@@ -53,8 +57,7 @@ class Main2Node(Node):
         self.create_subscription(
             Bool, MAIN2_SETTING_START_TOPIC, self.start_callback, 10
         )
-        # Mode 선택 전부터 Main 토픽을 받을 수 있도록 항상 구독한다.
-        # callback에서 현재 mode를 기준으로 Mode 1 / Mode 2를 분기한다.
+        # Mode 선택 전에도 Main 토픽을 받을 수 있도록 항상 구독한다.
         self.create_subscription(
             String, MAIN2_KEEP_SET_TOPIC, self.keep_set_callback, 10
         )
@@ -69,15 +72,13 @@ class Main2Node(Node):
         self.waiting_command_id = None
         self.after_arm_success = None
         self.delay_timer = None
-        self.sample_timeout_timer = None
         self.sampling_kind = None
         self.sampling_box = None
         self.vision_samples = []
         self.sample_done_callback = None
         self.active_stack = None
         self.stack_done_callback = None
-        # Mode 2 cycle state.
-        # keep_set은 현재 cycle이 아니라 다음 cycle에서 사용한다.
+        # Mode 2 cycle state. keep_set은 다음 cycle용으로 저장한다.
         self.mode2_cycle_number = 0
         self.pending_keep_received = False
         self.pending_keep_enabled = False
@@ -102,27 +103,17 @@ class Main2Node(Node):
     def configure_mode(self, mode, selected_counts=None):
         if self.running or self.mode2_home_returning or self.ending_session:
             raise RuntimeError("cannot change mode while task is active")
-
         self.mode = int(mode)
         self.selected_counts = dict(selected_counts or {})
         self.session_done = False
         self.start_requested = False
-
         if self.mode == MODE_SETTING:
             self.mode2_cycle_number = 0
             self.pending_keep_received = False
             self.pending_keep_enabled = False
             self.pending_keep_count = 0
             self.pending_keep_done_sent = False
-            self.keep_enabled = False
-            self.keep_count = 0
-            self.keep_set_done_sent = False
-            self.phase = None
-            self.phase_target_count = 0
-            self.phase_index = 0
-            self.rail_index = 0
-            self.active_view_pose = None
-
+            self._reset_mode2_active_state()
         self.get_logger().info(
             f"Mode selected | MODE {self.mode}: {MODE_NAMES[self.mode]}"
         )
@@ -130,7 +121,6 @@ class Main2Node(Node):
             self.get_logger().info(
                 f"Mode 1 target counts | {self.selected_counts}"
             )
-
         self._publish_status(
             "IDLE",
             mode=self.mode,
@@ -139,7 +129,9 @@ class Main2Node(Node):
 
     # ============================================================
     # Common start trigger
+
     # ============================================================
+
     def start_callback(self, msg):
         if not msg.data:
             return
@@ -148,26 +140,22 @@ class Main2Node(Node):
                 "setting_start ignored: mode is not selected yet"
             )
             return
-        # Mode 1 / Mode 2를 callback 단계에서 명확하게 분기한다.
-        # Mode 1은 기존 동작 유지
+        # Mode 1 / Mode 2 시작 신호 처리.
         if self.mode == MODE_PICKUP_TO_BASKET:
-            if self.running:
-                self.get_logger().warning("Start ignored: already running")
+            if self.running or self.start_requested:
+                self.get_logger().warning(
+                    "Mode 1 start ignored: already running or start delay active"
+                )
                 return
             self.start_requested = True
-            self._try_start_mode1()
+            self.get_logger().info(
+                "Mode 1 setting_start received | start after 3.0 sec"
+            )
+            self._publish_status("MODE1_START_DELAY", delay_sec=3.0)
+            self._start_delay(10.0, self._try_start_mode1)
             return
-        # Mode 2
-        # Cycle 1:
-        #   최초 setting_start 하나만으로 즉시 시작한다.
-        #
-        # Cycle 2+:
-        #   keep_set과 setting_start는 거의 동시에 올 수 있으므로
-        #   callback 처리 순서는 보장하지 않는다.
-        #   두 신호를 각각 저장해 두고 둘 다 준비되면 시작한다.
-        #
-        # 단, 현재 cycle 실행 중이거나 HOME 복귀 중에 들어오는
-        # setting_start는 다음 cycle용으로 저장하지 않고 무시한다.
+        # Mode 2: 첫 cycle은 setting_start만으로 시작하고,
+        # 이후 cycle은 keep_set + setting_start가 모두 필요하다.
         if self.running or self.mode2_home_returning:
             self.get_logger().warning(
                 "Mode 2 setting_start ignored: cycle is running or returning HOME"
@@ -180,9 +168,12 @@ class Main2Node(Node):
             f"pending_keep={self.pending_keep_received}"
         )
         self._try_start_mode2()
+
     # ============================================================
     # Mode 1: Pick-up zone -> Basket
+
     # ============================================================
+
     def _try_start_mode1(self):
         if self.running or not self.start_requested:
             return
@@ -200,6 +191,7 @@ class Main2Node(Node):
             counts=self.selected_counts,
         )
         self._send_move("OCR_VIEW", self._wait_first_ocr)
+
     def _mode1_configuration_errors(self):
         errors = []
         if not MAIN2_CALIBRATION_COMPLETE:
@@ -236,45 +228,55 @@ class Main2Node(Node):
         if missing:
             errors.append(f"missing named poses: {sorted(missing)}")
         return errors
+
     def _wait_first_ocr(self):
         self._publish_status("OCR_ABCD")
-        self._start_delay(OCR_SHOW_WAIT_SEC, self._move_ab_view)
-    def _move_ab_view(self):
-        self._send_move(
-            "DEPTH_VIEW_AB",
-            lambda: self._process_stack("A", self._move_cd_view),
+        self._start_delay(
+            OCR_SHOW_WAIT_SEC,
+            lambda: self._move_stack_view(
+                "A",
+                lambda: self._move_stack_view(
+                    "C",
+                    lambda: self._send_move(
+                        "ARM_SAFE",
+                        self._wait_scout_move,
+                    ),
+                ),
+            ),
         )
-    def _move_cd_view(self):
+
+    def _move_stack_view(self, box_name, done_callback):
         self._send_move(
-            "DEPTH_VIEW_CD",
-            lambda: self._process_stack("C", self._prepare_scout_move),
+            BOX_VIEW[box_name],
+            lambda: self._process_stack(box_name, done_callback),
         )
-    def _prepare_scout_move(self):
-        self._send_move("ARM_SAFE", self._wait_scout_move)
+
     def _wait_scout_move(self):
         self._publish_status("SCOUT_MOVING", wait_sec=SCOUT_MOVE_WAIT_SEC)
-        self._start_delay(SCOUT_MOVE_WAIT_SEC, self._move_second_ocr)
-    def _move_second_ocr(self):
-        self._send_move("OCR_VIEW", self._wait_second_ocr)
+        self._start_delay(
+            SCOUT_MOVE_WAIT_SEC,
+            lambda: self._send_move("OCR_VIEW", self._wait_second_ocr),
+        )
+
     def _wait_second_ocr(self):
         self._publish_status("OCR_EFGH")
-        self._start_delay(OCR_SHOW_WAIT_SEC, self._move_ef_view)
-    def _move_ef_view(self):
-        self._send_move(
-            "DEPTH_VIEW_EF",
-            lambda: self._process_stack("F", self._move_gh_view),
+        self._start_delay(
+            OCR_SHOW_WAIT_SEC,
+            lambda: self._move_stack_view(
+                "F",
+                lambda: self._move_stack_view(
+                    "H",
+                    lambda: self._return_home_before_session_end(
+                        success=True,
+                        status="MODE1_DONE",
+                        reason=None,
+                    ),
+                ),
+            ),
         )
-    def _move_gh_view(self):
-        self._send_move(
-            "DEPTH_VIEW_GH",
-            lambda: self._process_stack("H", self._finish_mode1),
-        )
+
     def _process_stack(self, box_name, done_callback):
         count = int(self.selected_counts.get(box_name, 0))
-        self.get_logger().info(
-            f"{box_name}: stack process start | target_count={count} | "
-            f"view={BOX_VIEW[box_name]}"
-        )
         if count <= 0:
             self.get_logger().info(f"{box_name}: SKIP")
             done_callback()
@@ -285,17 +287,12 @@ class Main2Node(Node):
             box_name=box_name,
             done_callback=self._finish_stack_sampling,
         )
+
     def _finish_stack_sampling(self, median):
         box_name = self.sampling_box
         count = int(self.selected_counts[box_name])
         shelf_z = float(SHELF_Z_M[box_name])
-        box_height = (float(median[2]) - shelf_z) / count
-        if box_height <= 0.0:
-            self._abort(
-                f"{box_name} invalid box height: "
-                f"{box_height * 1000.0:.1f} mm"
-            )
-            return
+        box_height = abs(float(median[2]) - shelf_z) / count + MODE1_BOX_HEIGHT_OFFSET_M
         self.active_stack = {
             "box": box_name,
             "target_count": count,
@@ -311,6 +308,7 @@ class Main2Node(Node):
             f"height={box_height * 1000.0:.1f} mm"
         )
         self._execute_next_stack_item()
+
     def _execute_next_stack_item(self):
         stack = self.active_stack
         index = stack["current_index"]
@@ -347,7 +345,6 @@ class Main2Node(Node):
             and index + 1 >= stack["target_count"]
             and not is_last_pick
         )
-
         if is_last_pick:
             return_pose = "HOME"
             success_callback = self._finish_mode1_from_home
@@ -357,7 +354,6 @@ class Main2Node(Node):
         else:
             return_pose = BOX_VIEW[box_name]
             success_callback = self._stack_item_done
-
         self._send_arm_command(
             {
                 "command": "pick_place",
@@ -367,13 +363,12 @@ class Main2Node(Node):
             },
             success_callback,
         )
+
     def _finish_cd_stack_from_arm_safe(self):
         self.active_stack["current_index"] += 1
-
         box_name = self.active_stack["box"]
         self.active_stack = None
         self.stack_done_callback = None
-
         self.get_logger().info(
             f"{box_name}: STACK DONE | direct -> ARM_SAFE"
         )
@@ -388,6 +383,7 @@ class Main2Node(Node):
             if int(self.selected_counts.get(later_box, 0)) > 0:
                 return False
         return True
+
     def _finish_mode1_from_home(self):
         self.running = False
         self.active_stack = None
@@ -395,9 +391,7 @@ class Main2Node(Node):
         self.sampling_kind = None
         self.sampling_box = None
         self.sample_done_callback = None
-        msg = Bool()
-        msg.data = True
-        self.setting_done_pub.publish(msg)
+        self._publish_true(self.setting_done_pub)
         self.get_logger().info(
             "Mode 1 COMPLETE | last Pick & Place -> HOME direct"
         )
@@ -406,18 +400,26 @@ class Main2Node(Node):
             home_reached=True,
         )
         self.session_done = True
+
     def _stack_item_done(self):
         self.active_stack["current_index"] += 1
         self._execute_next_stack_item()
-    def _finish_mode1(self):
-        self._return_home_before_session_end(
-            success=True,
-            status="MODE1_DONE",
-            reason=None,
-        )
+
+    def _reset_mode2_active_state(self):
+        self.keep_enabled = False
+        self.keep_count = 0
+        self.keep_set_done_sent = False
+        self.phase = None
+        self.phase_target_count = 0
+        self.phase_index = 0
+        self.rail_index = 0
+        self.active_view_pose = None
+
     # ============================================================
     # Mode 2: Keep/Basket -> Rail Setting
+
     # ============================================================
+
     def keep_set_callback(self, msg):
         if self.mode != MODE_SETTING:
             self.get_logger().warning(
@@ -432,7 +434,6 @@ class Main2Node(Node):
             self._publish_status("KEEP_SET_INVALID", reason=str(exc))
             return
         # keep_set은 다음 cycle용으로 저장한다.
-        # 현재 cycle 실행 중에 수신되어도 다음 cycle에서 사용한다.
         self.pending_keep_received = True
         self.pending_keep_enabled = keep_enabled
         self.pending_keep_count = keep_count
@@ -444,9 +445,8 @@ class Main2Node(Node):
             f"setting_start_waiting={self.start_requested}"
         )
         if not self.pending_keep_enabled:
-            self._publish_pending_keep_set_done()
-        # setting_start가 먼저 도착해 대기 중이었다면
-        # keep_set 저장 직후 두 조건이 모두 충족되므로 바로 시작한다.
+            self._publish_keep_set_done(pending=True)
+        # setting_start가 먼저 왔다면 keep_set 저장 직후 시작한다.
         if self.mode2_cycle_number > 0 and self.start_requested:
             self._try_start_mode2()
             return
@@ -456,7 +456,9 @@ class Main2Node(Node):
             keep=self.pending_keep_enabled,
             keep_count=self.pending_keep_count,
         )
+
     @staticmethod
+
     def _parse_keep_set(payload):
         if not isinstance(payload, dict):
             raise ValueError("keep_set must be a JSON object")
@@ -475,6 +477,7 @@ class Main2Node(Node):
                 f"keep_count must be 1~{MAIN2_SETTING_TOTAL_COUNT}"
             )
         return True, keep_count
+
     def _try_start_mode2(self):
         if self.running or self.mode2_home_returning:
             return
@@ -482,14 +485,12 @@ class Main2Node(Node):
             return
         first_cycle = self.mode2_cycle_number == 0
         if first_cycle:
-            # 첫 번째 cycle은 최초 setting_start 하나만으로 바로 시작한다.
-            # 같은 시점에 들어온 keep_set은 pending에 남겨 다음 cycle에서 사용한다.
+            # 첫 cycle은 setting_start만 사용하고 pending keep은 다음 cycle에 둔다.
             active_keep_enabled = False
             active_keep_count = 0
             active_keep_done_sent = False
         else:
-            # 두 번째 cycle부터는 keep_set + setting_start 두 신호가 모두 필요하다.
-            # 둘은 어느 callback이 먼저 실행되어도 상관없다.
+            # 두 번째 cycle부터 keep_set + setting_start가 모두 필요하다.
             if not self.pending_keep_received:
                 self.get_logger().info(
                     f"Mode 2 cycle {self.mode2_cycle_number + 1} "
@@ -503,8 +504,7 @@ class Main2Node(Node):
             active_keep_enabled = self.pending_keep_enabled
             active_keep_count = self.pending_keep_count
             active_keep_done_sent = self.pending_keep_done_sent
-            # 이번 cycle에서 사용할 keep_set을 active 값으로 옮겼으므로
-            # pending 슬롯은 비운다.
+            # 이번 cycle 값으로 옮긴 뒤 pending 슬롯을 비운다.
             self.pending_keep_received = False
             self.pending_keep_enabled = False
             self.pending_keep_count = 0
@@ -529,9 +529,10 @@ class Main2Node(Node):
             f"total={MAIN2_SETTING_TOTAL_COUNT}"
         )
         if self.keep_enabled:
-            self._start_keep_phase()
+            self._start_phase("KEEP")
         else:
-            self._start_basket_phase()
+            self._start_phase("BASKET")
+
     def _mode2_configuration_errors(self):
         errors = []
         for pose_name in ("KEEP_VIEW", "BASKET_VIEW"):
@@ -550,40 +551,49 @@ class Main2Node(Node):
                 "MAIN2_SETTING_TOTAL_COUNT exceeds RAIL_MAX_BOX_COUNT"
             )
         return errors
-    def _start_keep_phase(self):
-        self.phase = "KEEP"
-        self.phase_target_count = self.keep_count
+
+    def _start_phase(self, phase):
+        if phase == "KEEP":
+            target_count = self.keep_count
+            view_pose = "KEEP_VIEW"
+            status = "KEEP_PHASE_START"
+            status_extra = {}
+        elif phase == "BASKET":
+            target_count = MAIN2_SETTING_TOTAL_COUNT - self.rail_index
+            if target_count <= 0:
+                self._finish_mode2()
+                return
+
+            view_pose = "BASKET_VIEW"
+            status = "BASKET_PHASE_START"
+            status_extra = {"rail_start_index": self.rail_index}
+        else:
+            raise ValueError(f"Unknown Mode 2 phase: {phase}")
+
+        self.phase = phase
+        self.phase_target_count = target_count
         self.phase_index = 0
-        self.active_view_pose = "KEEP_VIEW"
+        self.active_view_pose = view_pose
+
         self._publish_status(
-            "KEEP_PHASE_START",
-            count=self.phase_target_count,
+            status,
+            count=target_count,
+            **status_extra,
         )
         self._send_move(self.active_view_pose, self._sample_current_source)
+
     def _finish_keep_phase(self):
         self.get_logger().info(
             f"Keep phase COMPLETE | placed={self.phase_target_count}"
         )
         self._publish_keep_set_done()
+
         if self.rail_index >= MAIN2_SETTING_TOTAL_COUNT:
             self._finish_mode2()
             return
-        self._start_basket_phase()
-    def _start_basket_phase(self):
-        remaining = MAIN2_SETTING_TOTAL_COUNT - self.rail_index
-        if remaining <= 0:
-            self._finish_mode2()
-            return
-        self.phase = "BASKET"
-        self.phase_target_count = remaining
-        self.phase_index = 0
-        self.active_view_pose = "BASKET_VIEW"
-        self._publish_status(
-            "BASKET_PHASE_START",
-            count=remaining,
-            rail_start_index=self.rail_index,
-        )
-        self._send_move(self.active_view_pose, self._sample_current_source)
+
+        self._start_phase("BASKET")
+
     def _sample_current_source(self):
         if self.phase_index >= self.phase_target_count:
             if self.phase == "KEEP":
@@ -596,6 +606,7 @@ class Main2Node(Node):
             box_name=None,
             done_callback=self._execute_rail_pick_place,
         )
+
     def _execute_rail_pick_place(self, median):
         place = self._rail_place_xyz(self.rail_index)
         self._publish_status(
@@ -614,27 +625,35 @@ class Main2Node(Node):
                 "place_xyz_m": place.tolist(),
                 "return_pose": "HOME" if is_last_pick else self.active_view_pose,
             },
-            self._rail_last_item_done_from_home if is_last_pick else self._rail_item_done,
+            (
+                lambda: self._rail_item_done(last_item=True)
+                if is_last_pick
+                else self._rail_item_done()
+            ),
         )
-    def _rail_last_item_done_from_home(self):
+
+    def _rail_item_done(self, last_item=False):
         self.phase_index += 1
         self.rail_index += 1
-        self.get_logger().info(
-            f"Rail final item COMPLETE | phase={self.phase} | "
-            f"rail_index={self.rail_index}/{MAIN2_SETTING_TOTAL_COUNT} | "
-            "HOME direct"
-        )
-        self._finish_mode2_after_home()
-    def _rail_item_done(self):
-        self.phase_index += 1
-        self.rail_index += 1
+
+        if last_item:
+            self.get_logger().info(
+                f"Rail final item COMPLETE | phase={self.phase} | "
+                f"rail_index={self.rail_index}/{MAIN2_SETTING_TOTAL_COUNT} | "
+                "HOME direct"
+            )
+            self._finish_mode2_after_home()
+            return
+
         self.get_logger().info(
             f"Rail item COMPLETE | phase={self.phase} | "
             f"phase_index={self.phase_index}/{self.phase_target_count} | "
             f"rail_index={self.rail_index}/{MAIN2_SETTING_TOTAL_COUNT}"
         )
         self._sample_current_source()
+
     @staticmethod
+
     def _rail_place_xyz(index):
         xyz = np.asarray(RAIL_FIRST_PLACE_XYZ_M, dtype=float).copy()
         offset = float(index) * float(RAIL_PLACE_OFFSET_M)
@@ -646,32 +665,27 @@ class Main2Node(Node):
         else:
             raise RuntimeError("RAIL_PLACE_OFFSET_AXIS must be 'X' or 'Y'")
         return xyz
-    def _publish_pending_keep_set_done(self):
-        if self.pending_keep_done_sent:
+
+    def _publish_keep_set_done(self, pending=False):
+        if pending:
+            if self.pending_keep_done_sent:
+                return
+        elif self.keep_set_done_sent:
             return
-        msg = Bool()
-        msg.data = True
-        self.keep_set_done_pub.publish(msg)
-        self.pending_keep_done_sent = True
-        self.get_logger().info(
-            f"Publish {MAIN2_KEEP_SET_DONE_TOPIC} = True | "
-            "next-cycle keep=False"
-        )
-    def _publish_keep_set_done(self):
-        if self.keep_set_done_sent:
+
+        self._publish_true(self.keep_set_done_pub)
+
+        if pending:
+            self.pending_keep_done_sent = True
             return
-        msg = Bool()
-        msg.data = True
-        self.keep_set_done_pub.publish(msg)
+
         self.keep_set_done_sent = True
-        self.get_logger().info(
-            f"Publish {MAIN2_KEEP_SET_DONE_TOPIC} = True"
-        )
         self._publish_status(
             "KEEP_SET_DONE",
             keep=self.keep_enabled,
             keep_count=self.keep_count,
         )
+
     def _finish_mode2(self):
         self.running = False
         self.mode2_home_returning = True
@@ -679,27 +693,17 @@ class Main2Node(Node):
             f"Mode 2 cycle {self.mode2_cycle_number} end -> HOME 이동"
         )
         self._send_move("HOME", self._finish_mode2_after_home)
+
     def _finish_mode2_after_home(self):
-        # 마지막 Pick & Place가 HOME으로 직접 끝나는 경로에서도
-        # 다음 cycle의 setting_start를 정상 수신할 수 있도록
-        # Mode 2 실행 상태를 반드시 해제한다.
+        # 마지막 Pick & Place가 HOME으로 직접 끝나도 실행 상태를 해제한다.
         self.running = False
         self.mode2_home_returning = False
-        msg = Bool()
-        msg.data = True
-        self.setting_done_pub.publish(msg)
+        self._publish_true(self.setting_done_pub)
         self.get_logger().info(
             f"Mode 2 CYCLE {self.mode2_cycle_number} COMPLETE | "
             "wait next setting_start"
         )
-        self.phase = None
-        self.phase_target_count = 0
-        self.phase_index = 0
-        self.rail_index = 0
-        self.active_view_pose = None
-        self.keep_enabled = False
-        self.keep_count = 0
-        self.keep_set_done_sent = False
+        self._reset_mode2_active_state()
         self.start_requested = False
         if self.pending_keep_received:
             self._publish_status(
@@ -713,9 +717,12 @@ class Main2Node(Node):
                 "WAIT_KEEP_SET",
                 cycle=self.mode2_cycle_number + 1,
             )
+
     # ============================================================
     # Shared Vision sampling
+
     # ============================================================
+
     def _start_vision_sampling(self, kind, box_name, done_callback):
         self.sampling_kind = kind
         self.sampling_box = box_name
@@ -730,6 +737,7 @@ class Main2Node(Node):
         self.get_logger().info(
             f"Vision waiting until detected | kind={kind} | box={box_name}"
         )
+
     def vision_base_callback(self, msg):
         if not self.running or self.sampling_kind is None:
             return
@@ -742,13 +750,13 @@ class Main2Node(Node):
         self.vision_samples.append(xyz)
         if len(self.vision_samples) >= STACK_SAMPLE_COUNT:
             self._finish_vision_sampling()
+
     def _finish_vision_sampling(self):
         kind = self.sampling_kind
         box_name = self.sampling_box
         callback = self.sample_done_callback
         self.sampling_kind = None
         self.sample_done_callback = None
-        self._cancel_sample_timeout()
         samples = np.asarray(self.vision_samples, dtype=float)
         median = np.median(samples, axis=0)
         spread = np.ptp(samples, axis=0)
@@ -767,9 +775,12 @@ class Main2Node(Node):
         callback(median)
         if kind != "STACK":
             self.sampling_box = None
+
     # ============================================================
     # Arm request / result
+
     # ============================================================
+
     def _send_move(self, pose_name, success_callback):
         self._send_arm_command(
             {
@@ -778,6 +789,7 @@ class Main2Node(Node):
             },
             success_callback,
         )
+
     def _send_arm_command(self, payload, success_callback):
         if self.waiting_command_id is not None:
             self._abort("internal error: overlapping arm command")
@@ -793,6 +805,7 @@ class Main2Node(Node):
         self.get_logger().info(
             f"Arm command | id={payload['id']} | command={payload['command']}"
         )
+
     def arm_result_callback(self, msg):
         try:
             result = json.loads(msg.data)
@@ -827,27 +840,24 @@ class Main2Node(Node):
             )
             return
         callback()
+
     # ============================================================
     # Timer / status / error
+
     # ============================================================
+
     def _start_delay(self, seconds, callback):
         self._cancel_delay()
         def on_timer():
             self._cancel_delay()
             callback()
         self.delay_timer = self.create_timer(float(seconds), on_timer)
+
     def _cancel_delay(self):
         if self.delay_timer is not None:
             self.destroy_timer(self.delay_timer)
             self.delay_timer = None
-    def _start_sample_timeout(self):
-        # 인식 timeout으로 Task를 종료하지 않는다.
-        # 인식될 때까지 현재 위치에서 계속 기다린다.
-        self._cancel_sample_timeout()
-    def _cancel_sample_timeout(self):
-        if self.sample_timeout_timer is not None:
-            self.destroy_timer(self.sample_timeout_timer)
-            self.sample_timeout_timer = None
+
     def _return_home_before_session_end(self, success, status, reason):
         if self.ending_session:
             return
@@ -856,27 +866,23 @@ class Main2Node(Node):
         self.sampling_box = None
         self.sample_done_callback = None
         self._cancel_delay()
-        self._cancel_sample_timeout()
         self.ending_session = True
         self.end_success = bool(success)
         self.end_reason = reason
         self.end_status = status
         self.waiting_command_id = None
         self.after_arm_success = None
-        self.get_logger().info(
-            "Mode end -> HOME 이동 후 MODE SELECT로 복귀"
+        self._send_move(
+            "HOME",
+            lambda: self._finalize_session_end(home_reached=True),
         )
-        self._send_move("HOME", self._home_return_done)
-    def _home_return_done(self):
-        self._finalize_session_end(home_reached=True)
+
     def _finalize_session_end(self, home_reached):
         success = bool(self.end_success)
         reason = self.end_reason
         status = self.end_status
         if success:
-            msg = Bool()
-            msg.data = True
-            self.setting_done_pub.publish(msg)
+            self._publish_true(self.setting_done_pub)
             if self.mode == MODE_PICKUP_TO_BASKET:
                 self.get_logger().info("Mode 1 COMPLETE")
                 self._publish_status(
@@ -905,12 +911,20 @@ class Main2Node(Node):
         self.end_reason = None
         self.end_status = None
         self.session_done = True
+
     def _abort(self, reason):
         self._return_home_before_session_end(
             success=False,
             status="ERROR",
             reason=reason,
         )
+
+    @staticmethod
+    def _publish_true(publisher):
+        msg = Bool()
+        msg.data = True
+        publisher.publish(msg)
+
     def _publish_status(self, state, **extra):
         payload = {
             "state": state,
@@ -920,10 +934,12 @@ class Main2Node(Node):
         msg = String()
         msg.data = json.dumps(payload, ensure_ascii=False)
         self.status_pub.publish(msg)
+
     def destroy_node(self):
         self._cancel_delay()
-        self._cancel_sample_timeout()
         super().destroy_node()
+
+
 def _prompt_mode():
     while True:
         print()
@@ -968,13 +984,14 @@ def _prompt_mode():
         if value == "2":
             return MODE_SETTING, None
         print("1, 2 또는 q를 입력하세요.")
+
+
 def main(args=None):
     rclpy.init(args=args)
     node = Main2Node()
     try:
         while rclpy.ok():
-            # Subscriber를 먼저 생성한 상태에서 기존 CLI 방식으로 mode를 선택한다.
-            # mode 선택 중 도착한 Main topic도 subscriber queue에 받을 수 있다.
+            # Subscriber를 유지한 채 CLI에서 mode를 선택한다.
             mode, selected_counts = _prompt_mode()
             if mode is None:
                 break
@@ -984,8 +1001,7 @@ def main(args=None):
             )
             while rclpy.ok() and not node.session_done:
                 rclpy.spin_once(node, timeout_sec=0.10)
-            # Mode 1 완료/오류 종료 후에도 Node는 파괴하지 않고
-            # 같은 subscriber를 유지한 채 다시 mode 선택으로 돌아간다.
+            # Node를 유지한 채 mode 선택으로 돌아간다.
             node.mode = None
             node.selected_counts = {}
             node.session_done = False
@@ -999,5 +1015,7 @@ def main(args=None):
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+
+
 if __name__ == "__main__":
     main()
